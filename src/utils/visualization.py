@@ -182,3 +182,22 @@ class TrackingVisualizer:
         print(f"   • No reliance on YOLO's failing built-in ReID")
         print(f"   • Direct control over similarity thresholds")
         print(f"   • Robust performance in multi-person scenarios")
+
+class InferenceVisualizer:
+    """Simple visualizer for inference pipeline"""
+    
+    def __init__(self):
+        self.color_palette = [
+            (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
+            (255, 0, 255), (0, 255, 255), (128, 0, 128), (255, 165, 0),
+            (255, 192, 203), (0, 128, 0), (128, 128, 0), (0, 0, 128)
+        ]
+    
+    def get_person_color(self, person_id: int) -> Tuple[int, int, int]:
+        """Get color for a person ID"""
+        return self.color_palette[person_id % len(self.color_palette)]
+
+
+def create_inference_visualizer() -> InferenceVisualizer:
+    """Create an InferenceVisualizer instance"""
+    return InferenceVisualizer()

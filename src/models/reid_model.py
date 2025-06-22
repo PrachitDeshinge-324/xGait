@@ -1,6 +1,16 @@
 """
 Person Re-Identification (ReID) models for appearance-based tracking
 """
+import sys
+import os
+from pathlib import Path
+
+# Add parent directory to path for utils and config imports
+current_dir = Path(__file__).parent
+src_dir = current_dir.parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
+
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
@@ -9,8 +19,8 @@ import numpy as np
 import cv2
 from typing import List, Tuple, Optional
 
-from ..utils.device_utils import DeviceManager, tensor_to_numpy
-from ..config import get_device_config
+from utils.device_utils import DeviceManager, tensor_to_numpy
+from config import get_device_config
 
 class ReIDFeatureExtractor(nn.Module):
     """

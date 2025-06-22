@@ -47,6 +47,8 @@ class ModelConfig:
     """Model configuration settings"""
     yolo_model_path: str = "weights/yolo11m.pt"
     transreid_model_path: str = "weights/transreid_vitbase.pth"
+    xgait_model_path: str = "weights/Gait3D-XGait-120000.pt"
+    parsing_model_path: str = "weights/schp_resnet101.pth"
     device: str = get_device()
     
     def __post_init__(self):
@@ -67,6 +69,10 @@ class TrackerConfig:
     # ReID parameters
     similarity_threshold: float = 0.25
     max_missing_frames: int = 75
+    
+    # XGait identification parameters
+    identification_threshold: float = 0.6
+    sequence_length: int = 10
     
     # Tracking parameters
     track_history_length: int = 100

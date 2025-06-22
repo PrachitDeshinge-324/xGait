@@ -1,6 +1,16 @@
 """
 Custom Person Tracker using TransReID for appearance-based re-identification
 """
+import sys
+import os
+from pathlib import Path
+
+# Add parent directory to path for utils and config imports
+current_dir = Path(__file__).parent
+src_dir = current_dir.parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
+
 import cv2
 import numpy as np
 import torch
@@ -9,9 +19,9 @@ from collections import defaultdict, deque
 from typing import List, Tuple, Dict, Set
 import math
 
-from ..models.reid_model import create_reid_model
-from ..config import TrackerConfig, get_device_config
-from ..utils.device_utils import DeviceManager
+from models.reid_model import create_reid_model
+from config import TrackerConfig, get_device_config
+from utils.device_utils import DeviceManager
 
 class PersonTracker:
     """
