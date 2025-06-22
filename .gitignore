@@ -1,0 +1,70 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Virtual environments
+env/
+venv/
+.venv/
+
+# Data files
+*.csv
+*.tsv
+*.h5
+*.hdf5
+*.npz
+*.npy
+*.pkl
+*.pickle
+
+# Images and videos
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.gif
+*.tiff
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Model files
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.pb
+*.tflite
+*.h5
+*.weights
+
+# Logs and outputs
+*.log
+logs/
+output/
+runs/
+results/
+checkpoints/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+
+# Test and debug artifacts
+*.prof
+*.tmp
+*.bak
+*.old
