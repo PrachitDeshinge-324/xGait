@@ -10,11 +10,12 @@ from typing import List, Tuple, Dict, Set
 import math
 
 from ..models.reid_model import create_reid_model
-from ..config import TrackerConfig
+from ..config import TrackerConfig, get_device_config
+from ..utils.device_utils import DeviceManager
 
 class PersonTracker:
     """
-    Custom person tracker using appearance-based re-identification
+    Custom person tracker using appearance-based re-identification with device optimization
     """
     def __init__(self, 
                  yolo_model_path: str = "weights/yolo11m.pt", 
@@ -24,9 +25,21 @@ class PersonTracker:
         self.device = device
         self.config = config or TrackerConfig()
         
-        # Load YOLO for person detection
+        # Get device-specific configuration
+        self.device_config = get_device_config(device)
+        self.device_manager = DeviceManager(device, self.device_config["dtype"])
+        
+        # Load YOLO for person detection with device optimization
         self.yolo_model = YOLO(yolo_model_path)
         self.yolo_model.to(device)
+        
+        # Apply device-specific optimizations to YOLO
+        if device == "cuda" and self.device_config["dtype"] == torch.float16:
+            # Use half precision for CUDA
+            try:
+                self.yolo_model.model.half()
+            except Exception as e:
+                print(f"Warning: Could not apply half precision to YOLO: {e}")
         
         # Load ReID model for appearance matching
         self.reid_model = create_reid_model(device)
@@ -43,6 +56,8 @@ class PersonTracker:
         
         print(f"✅ PersonTracker initialized")
         print(f"   Device: {device}")
+        print(f"   Dtype: {self.device_config['dtype']}")
+        print(f"   Autocast: {self.device_config['autocast']}")
         print(f"   Similarity threshold: {self.config.similarity_threshold}")
         print(f"   Max missing frames: {self.config.max_missing_frames}")
     
@@ -243,7 +258,7 @@ class PersonTracker:
     
     def track_persons(self, frame: np.ndarray, frame_number: int = 0) -> List[Tuple[int, np.ndarray, float]]:
         """
-        Main tracking function
+        Main tracking function with device optimization
         
         Args:
             frame: Input video frame
@@ -252,14 +267,16 @@ class PersonTracker:
         Returns:
             List of (track_id, bounding_box, confidence) tuples
         """
-        # YOLO detection
-        results = self.yolo_model(
-            frame,
-            conf=self.config.confidence_threshold,
-            iou=self.config.iou_threshold,
-            classes=[0],  # Person class only
-            verbose=False
-        )
+        # YOLO detection with device-specific optimization
+        with self.device_manager.autocast_context():
+            results = self.yolo_model(
+                frame,
+                conf=self.config.confidence_threshold,
+                iou=self.config.iou_threshold,
+                classes=[0],  # Person class only
+                verbose=False,
+                half=self.device_config["dtype"] == torch.float16 and self.device == "cuda"
+            )
         
         if results[0].boxes is None:
             return []
@@ -291,11 +308,37 @@ class PersonTracker:
         
         return results_list
     
+    def get_device_info(self) -> Dict:
+        """Get device information and memory usage"""
+        info = {
+            'device': self.device,
+            'dtype': str(self.device_config['dtype']),
+            'autocast': self.device_config['autocast'],
+            'compile': self.device_config['compile'],
+            'memory_usage': self.device_manager.get_memory_info()
+        }
+        
+        if self.device == "cuda":
+            info['gpu_name'] = torch.cuda.get_device_name()
+            info['cuda_version'] = torch.version.cuda
+        
+        return info
+    
+    def clear_memory_cache(self):
+        """Clear device memory cache"""
+        self.device_manager.clear_cache()
+        
+    def synchronize_device(self):
+        """Synchronize device operations"""
+        self.device_manager.synchronize()
+
     def get_statistics(self) -> Dict:
-        """Get tracking statistics"""
-        return {
+        """Get tracking statistics including device info"""
+        stats = {
             "active_tracks": len(self.track_features),
             "stable_tracks": len(self.stable_tracks),
             "max_track_id": self.next_id - 1,
-            "total_tracks_created": self.next_id - 1
+            "total_tracks_created": self.next_id - 1,
+            "device_info": self.get_device_info()
         }
+        return stats

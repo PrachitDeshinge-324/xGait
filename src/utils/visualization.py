@@ -82,12 +82,12 @@ class TrackingVisualizer:
             thickness = 5 if is_stable else 3
             cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, thickness)
             
-            # Draw track history trail
-            if track_id in track_history and len(track_history[track_id]) > 1:
-                points = [(x, y) for x, y, _, _ in track_history[track_id]]
-                for k in range(1, len(points)):
-                    trail_thickness = 4 if is_stable else 2
-                    cv2.line(annotated_frame, points[k-1], points[k], color, trail_thickness)
+            # # Draw track history trail
+            # if track_id in track_history and len(track_history[track_id]) > 1:
+            #     points = [(x, y) for x, y, _, _ in track_history[track_id]]
+            #     for k in range(1, len(points)):
+            #         trail_thickness = 4 if is_stable else 2
+            #         cv2.line(annotated_frame, points[k-1], points[k], color, trail_thickness)
             
             # Draw label
             stability_status = "STABLE" if is_stable else "UNSTABLE"
@@ -120,31 +120,31 @@ class TrackingVisualizer:
         """Draw information overlay on frame"""
         
         info_lines = [
-            "CUSTOM TRANSREID TRACKER",
+            # "CUSTOM TRANSREID TRACKER",
             f"Frame: {frame_count} | Active: {active_tracks} | Max ID: {max_track_id}",
-            f"Performance: {'EXCELLENT' if max_track_id <= 8 else 'GOOD' if max_track_id <= 12 else 'NEEDS TUNING'}",
+            # f"Performance: {'EXCELLENT' if max_track_id <= 8 else 'GOOD' if max_track_id <= 12 else 'NEEDS TUNING'}",
             "Method: TransReID Model + Appearance Matching"
         ]
         
         for i, line in enumerate(info_lines):
-            color = (0, 255, 0) if i == 0 else (255, 255, 255)
-            weight = 3 if i == 0 else 2
+            color = (0, 255, 255) if i == 0 else (255, 255, 255)
+            weight = 2
             cv2.putText(frame, line, (10, 30 + i * 30),
                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, weight)
         
         # Performance indicator
-        if max_track_id <= 8:
-            status_text = f"✅ EXCELLENT - {max_track_id} IDs for 7 people!"
-            status_color = (0, 255, 0)
-        elif max_track_id <= 12:
-            status_text = f"⚠️ GOOD - {max_track_id} IDs (room for improvement)"
-            status_color = (0, 255, 255)
-        else:
-            status_text = f"🚨 NEEDS TUNING - {max_track_id} IDs"
-            status_color = (0, 0, 255)
+        # if max_track_id <= 8:
+        #     status_text = f"✅ EXCELLENT - {max_track_id} IDs for 7 people!"
+        #     status_color = (0, 255, 0)
+        # elif max_track_id <= 12:
+        #     status_text = f"⚠️ GOOD - {max_track_id} IDs (room for improvement)"
+        #     status_color = (0, 255, 255)
+        # else:
+        #     status_text = f"🚨 NEEDS TUNING - {max_track_id} IDs"
+        #     status_color = (0, 0, 255)
         
-        cv2.putText(frame, status_text, (10, 160),
-                  cv2.FONT_HERSHEY_SIMPLEX, 1.0, status_color, 3)
+        # cv2.putText(frame, status_text, (10, 160),
+        #           cv2.FONT_HERSHEY_SIMPLEX, 1.0, status_color, 3)
     
     def print_summary(self, 
                      max_track_id: int, 

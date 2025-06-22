@@ -9,6 +9,9 @@ import numpy as np
 import cv2
 from typing import List, Tuple, Optional
 
+from ..utils.device_utils import DeviceManager, tensor_to_numpy
+from ..config import get_device_config
+
 class ReIDFeatureExtractor(nn.Module):
     """
     CNN-based feature extractor for person re-identification
@@ -49,11 +52,15 @@ class ReIDFeatureExtractor(nn.Module):
 
 class ReIDModel:
     """
-    Main ReID model wrapper for person re-identification
+    Main ReID model wrapper for person re-identification with device-aware optimization
     """
     def __init__(self, device: str = "cpu", feature_dim: int = 256):
         self.device = device
         self.feature_dim = feature_dim
+        
+        # Get device-specific configuration
+        self.device_config = get_device_config(device)
+        self.device_manager = DeviceManager(device, self.device_config["dtype"])
         
         # Image preprocessing pipeline
         self.transform = transforms.Compose([
@@ -67,14 +74,20 @@ class ReIDModel:
         
         # Load feature extractor
         self.model = ReIDFeatureExtractor(feature_dim)
-        self.model.to(device)
-        self.model.eval()
         
-        print(f"✅ ReID model initialized (device: {device}, feature_dim: {feature_dim})")
+        # Prepare model with device-specific optimizations
+        self.model = self.device_manager.prepare_model(self.model)
+        self.model = self.device_manager.optimize_inference(self.model)
+        
+        print(f"✅ ReID model initialized")
+        print(f"   Device: {device}")
+        print(f"   Dtype: {self.device_config['dtype']}")
+        print(f"   Autocast: {self.device_config['autocast']}")
+        print(f"   Feature dim: {feature_dim}")
     
     def preprocess_crops(self, crops: List[np.ndarray]) -> torch.Tensor:
         """
-        Preprocess person crops for feature extraction
+        Preprocess person crops for feature extraction with device optimization
         
         Args:
             crops: List of person crop images (BGR format)
@@ -83,7 +96,7 @@ class ReIDModel:
             Preprocessed tensor batch
         """
         if not crops:
-            return torch.empty(0, 3, 256, 128)
+            return torch.empty(0, 3, 256, 128, device=self.device, dtype=self.device_config["dtype"])
         
         processed_crops = []
         for crop in crops:
@@ -98,12 +111,13 @@ class ReIDModel:
             tensor_image = self.transform(pil_image)
             processed_crops.append(tensor_image)
         
-        # Stack into batch tensor
-        return torch.stack(processed_crops).to(self.device)
+        # Stack into batch tensor and prepare for device
+        batch = torch.stack(processed_crops)
+        return self.device_manager.prepare_tensor(batch)
     
     def extract_features(self, crops: List[np.ndarray]) -> torch.Tensor:
         """
-        Extract ReID features from person crops
+        Extract ReID features from person crops with device optimization
         
         Args:
             crops: List of person crop images
@@ -112,15 +126,16 @@ class ReIDModel:
             Feature tensor of shape (N, feature_dim)
         """
         if not crops:
-            return torch.empty(0, self.feature_dim)
+            return torch.empty(0, self.feature_dim, device=self.device, dtype=self.device_config["dtype"])
         
         # Preprocess crops
         batch = self.preprocess_crops(crops)
         
-        # Extract features
-        with torch.no_grad():
-            features = self.model(batch)
-            
+        # Extract features with autocast if supported
+        with self.device_manager.autocast_context():
+            with torch.no_grad():
+                features = self.model(batch)
+                
         return features
     
     def compute_similarity(self, features1: torch.Tensor, features2: torch.Tensor) -> torch.Tensor:
@@ -148,12 +163,12 @@ class ReIDModel:
 
 def create_reid_model(device: str = "cpu") -> ReIDModel:
     """
-    Factory function to create a ReID model
+    Factory function to create a ReID model with device optimization
     
     Args:
         device: Device to run the model on
         
     Returns:
-        Initialized ReID model
+        Initialized ReID model with device-specific optimizations
     """
     return ReIDModel(device=device)

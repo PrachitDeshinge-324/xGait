@@ -3,14 +3,59 @@ Configuration settings for the Person Tracking System
 """
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict, Any
+import torch
+
+def get_device() -> str:
+    """Determine the device to use for PyTorch"""
+    if torch.cuda.is_available():
+        return "cuda"
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        return "mps"
+    else:
+        return "cpu"
+
+def get_device_config(device: str) -> Dict[str, Any]:
+    """Get device-specific configuration"""
+    if device == "cuda":
+        return {
+            "dtype": torch.float16,  # Use float16 for CUDA for memory efficiency
+            "autocast": True,
+            "compile": True,
+            "memory_format": torch.channels_last,
+            "batch_size_multiplier": 2.0
+        }
+    elif device == "mps":
+        return {
+            "dtype": torch.float32,  # MPS works best with float32
+            "autocast": False,  # MPS doesn't support autocast yet
+            "compile": False,  # MPS compilation can be unstable
+            "memory_format": torch.contiguous_format,
+            "batch_size_multiplier": 1.0
+        }
+    else:  # CPU
+        return {
+            "dtype": torch.float32,  # CPU standard precision
+            "autocast": False,
+            "compile": False,
+            "memory_format": torch.contiguous_format,
+            "batch_size_multiplier": 0.5
+        }
 
 @dataclass
 class ModelConfig:
     """Model configuration settings"""
     yolo_model_path: str = "weights/yolo11m.pt"
     transreid_model_path: str = "weights/transreid_vitbase.pth"
-    device: str = "mps"  # "cuda", "mps", or "cpu"
+    device: str = get_device()
+    
+    def __post_init__(self):
+        """Initialize device-specific settings"""
+        self.device_config = get_device_config(self.device)
+        self.dtype = self.device_config["dtype"]
+        self.use_autocast = self.device_config["autocast"]
+        self.use_compile = self.device_config["compile"]
+        self.memory_format = self.device_config["memory_format"]
 
 @dataclass
 class TrackerConfig:

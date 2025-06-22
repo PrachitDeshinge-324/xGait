@@ -53,6 +53,22 @@ class PersonTrackingApp:
         print(f"   Video: {config.video.input_path}")
         print(f"   Model: {config.model.yolo_model_path}")
         print(f"   Device: {config.model.device}")
+        print(f"   Data type: {config.model.dtype}")
+        print(f"   Autocast: {config.model.use_autocast}")
+        print(f"   Model compilation: {config.model.use_compile}")
+        
+        # Print device information
+        device_info = self.tracker.get_device_info()
+        print(f"📱 Device Information:")
+        print(f"   • Device: {device_info['device']}")
+        print(f"   • Data type: {device_info['dtype']}")
+        print(f"   • Autocast: {device_info['autocast']}")
+        print(f"   • Model compilation: {device_info['compile']}")
+        if 'gpu_name' in device_info:
+            print(f"   • GPU: {device_info['gpu_name']}")
+        if 'cuda_version' in device_info:
+            print(f"   • CUDA version: {device_info['cuda_version']}")
+        print()
     
     def process_video(self) -> None:
         """Process the input video and perform tracking"""
@@ -101,11 +117,25 @@ class PersonTrackingApp:
                     # Display frame
                     cv2.imshow("Custom TransReID Tracker", annotated_frame)
                 
-                # Progress update
+                # Periodic memory cleanup
+                if frame_count % 500 == 0:
+                    self.tracker.clear_memory_cache()
+                
+                # Progress update with device memory info
                 if self.config.verbose and frame_count % 100 == 0:
                     progress = (frame_count / total_frames) * 100
+                    device_info = self.tracker.get_device_info()
+                    memory_info = device_info.get('memory_usage', {})
+                    
+                    memory_str = ""
+                    if 'allocated' in memory_info:
+                        allocated_mb = memory_info['allocated'] / (1024**2)
+                        memory_str = f" - Memory: {allocated_mb:.1f}MB"
+                    elif 'system_memory' in memory_info:
+                        memory_str = f" - System Memory: {memory_info['system_memory']:.1f}%"
+                    
                     print(f"Progress: {progress:.1f}% ({frame_count}/{total_frames}) - "
-                          f"Max ID: {self.max_track_id_seen}")
+                          f"Max ID: {self.max_track_id_seen}{memory_str}")
             
             # Handle key presses
             if self.config.video.display_window:
@@ -124,8 +154,10 @@ class PersonTrackingApp:
         if self.config.video.display_window:
             cv2.destroyAllWindows()
         
-        # Print final results
-        self._print_final_results(frame_count)
+        # Final cleanup
+        self.tracker.clear_memory_cache()
+        self.tracker.synchronize_device()
+
     
     def _update_statistics(self, tracking_results: List[Tuple[int, any, float]], frame_count: int) -> None:
         """Update tracking statistics"""
@@ -168,8 +200,26 @@ class PersonTrackingApp:
     def _print_final_results(self, total_frames: int) -> None:
         """Print final tracking results"""
         
-        # Get tracker statistics
+        # Get tracker statistics with device info
         stats = self.tracker.get_statistics()
+        device_info = stats.get('device_info', {})
+        memory_info = device_info.get('memory_usage', {})
+        
+        print(f"\n📱 Final Device Statistics:")
+        print(f"   • Device: {device_info.get('device', 'Unknown')}")
+        print(f"   • Data type: {device_info.get('dtype', 'Unknown')}")
+        print(f"   • Autocast enabled: {device_info.get('autocast', 'Unknown')}")
+        if 'gpu_name' in device_info:
+            print(f"   • GPU: {device_info['gpu_name']}")
+        
+        # Memory usage
+        if 'allocated' in memory_info:
+            allocated_mb = memory_info['allocated'] / (1024**2)
+            cached_mb = memory_info.get('cached', 0) / (1024**2)
+            print(f"   • Memory allocated: {allocated_mb:.1f}MB")
+            print(f"   • Memory cached: {cached_mb:.1f}MB")
+        elif 'system_memory' in memory_info:
+            print(f"   • System memory usage: {memory_info['system_memory']:.1f}%")
         
         # Print comprehensive results
         self.visualizer.print_summary(
