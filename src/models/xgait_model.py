@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from typing import List, Union, Optional, Tuple, Dict
 import logging
+from config import xgaitConfig
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,7 @@ class XGaitInference:
     """
     
     def __init__(self, model_path: Optional[str] = None, device: str = "cpu", num_classes: int = 100):
-        self.device = device if device != 'mps' else 'cpu'  # Force CPU for MPS compatibility
+        self.device = device
         self.num_classes = num_classes
         
         # Support adaptive input channels - will be determined by input data
@@ -171,58 +172,62 @@ class XGaitInference:
         self.fallback_model = XGaitModel(num_classes=num_classes, in_channels=1).to(self.device)  # Fallback for silhouettes only
         
         # Sequence parameters for proper XGait input
-        self.min_sequence_length = 10  # Minimum frames for reliable gait analysis
+        self.min_sequence_length = xgaitConfig.min_sequence_length  # Minimum frames for reliable gait analysis
         self.target_sequence_length = 30  # Target sequence length for XGait
         self.sequence_stride = 2  # Frame stride for sequence sampling
         
         # Load weights if available
         if model_path and os.path.exists(model_path):
-            try:
-                checkpoint = torch.load(model_path, map_location=self.device)
-                
-                # Handle different checkpoint formats
-                if 'model_state_dict' in checkpoint:
-                    state_dict = checkpoint['model_state_dict']
-                elif 'state_dict' in checkpoint:
-                    state_dict = checkpoint['state_dict']
-                else:
-                    state_dict = checkpoint
-                
-                # Remove module prefix if present
-                new_state_dict = {}
-                for k, v in state_dict.items():
-                    if k.startswith('module.'):
-                        new_state_dict[k[7:]] = v
-                    else:
-                        new_state_dict[k] = v
-                
-                # Try loading weights for both models
-                try:
-                    self.model.load_state_dict(new_state_dict, strict=False)
-                    self.fallback_model.load_state_dict(new_state_dict, strict=False)
-                    logger.info(f"✅ Loaded XGait weights from {model_path}")
-                    self.model_loaded = True
-                except Exception as load_error:
-                    logger.warning(f"⚠️ Partial weight loading failed: {load_error}")
-                    self.model_loaded = False
-            except Exception as e:
-                logger.warning(f"❌ Failed to load XGait weights: {e}")
-                self.model_loaded = False
+            self.model_loaded = self.load_model_weights(self.model, model_path)
+            if not self.model_loaded:
+                logger.warning("⚠️ Fallback to random initialization for main model.")
         else:
-            logger.warning("⚠️  No XGait weights found, using random initialization")
+            logger.warning("⚠️ No weights found, using random initialization.")
             self.model_loaded = False
+        
+        # Fallback model loading (optional, based on use case)
+        if self.model_loaded and self.fallback_model:
+            self.load_model_weights(self.fallback_model, model_path)
+        else:
+            logger.warning("⚠️ Fallback model not initialized or weights unavailable.")
         
         # Set both models to eval mode
         self.model.eval()
         self.fallback_model.eval()
         
-        # Gallery for known persons
-        self.gallery_features = {}
-        self.gallery_ids = []
+        # Initialize gallery manager (will be set externally)
+        self.gallery_manager = None
         
-        # Similarity threshold for identification
-        self.similarity_threshold = 0.7
+        # Similarity threshold for identification (fallback)
+        self.similarity_threshold = xgaitConfig.similarity_threshold
     
+    def load_model_weights(self, model, model_path: str):
+        """
+        Load weights into the given model from the specified path.
+
+        Args:
+            model: PyTorch model instance.
+            model_path: Path to the checkpoint file.
+
+        Returns:
+            bool: True if weights are loaded successfully, False otherwise.
+        """
+        try:
+            checkpoint = torch.load(model_path, map_location=self.device)
+
+            # Expect standardized checkpoint format
+            state_dict = checkpoint.get('model_state_dict', checkpoint.get('state_dict', checkpoint))
+
+            # Remove module prefix if present
+            new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+
+            model.load_state_dict(new_state_dict, strict=False)
+            logger.info(f"✅ Loaded weights from {model_path}")
+            return True
+        except Exception as e:
+            logger.warning(f"❌ Failed to load weights from {model_path}: {e}")
+            return False
+
     def preprocess_gait_sequence_with_parsing(self, silhouettes: List[np.ndarray], 
                                             parsing_masks: List[np.ndarray] = None) -> torch.Tensor:
         """
@@ -377,66 +382,91 @@ class XGaitInference:
         
         return np.array(features)
     
-    def add_to_gallery(self, person_id: str, features: np.ndarray):
-        """Add person features to gallery"""
-        if person_id not in self.gallery_features:
-            self.gallery_features[person_id] = []
-            self.gallery_ids.append(person_id)
-        
-        self.gallery_features[person_id].append(features)
+    def set_gallery_manager(self, gallery_manager):
+        """Set the gallery manager for advanced gallery functionality"""
+        self.gallery_manager = gallery_manager
     
-    def identify_person(self, query_features: np.ndarray) -> Tuple[Optional[str], float]:
+    def add_to_gallery(self, person_id: str, features: np.ndarray, track_id: Optional[int] = None):
+        """Add person features to gallery"""
+        if self.gallery_manager:
+            return self.gallery_manager.add_person(person_id, features, track_id)
+        else:
+            # Fallback to simple gallery
+            if person_id not in getattr(self, 'gallery_features', {}):
+                if not hasattr(self, 'gallery_features'):
+                    self.gallery_features = {}
+                self.gallery_features[person_id] = []
+            self.gallery_features[person_id].append(features)
+            return person_id
+    
+    def identify_person(self, query_features: np.ndarray, track_id: Optional[int] = None) -> Tuple[Optional[str], float]:
         """
         Identify person using gallery matching
         
         Args:
             query_features: Query feature vector
+            track_id: Optional track ID for advanced matching
             
         Returns:
             (person_id, confidence) or (None, 0.0)
         """
-        if not self.gallery_features:
-            return None, 0.0
-        
-        best_match = None
-        best_similarity = 0.0
-        
-        query_features = query_features / np.linalg.norm(query_features)
-        
-        for person_id, person_features_list in self.gallery_features.items():
-            # Compare with all stored features for this person
-            similarities = []
-            for stored_features in person_features_list:
-                stored_features = stored_features / np.linalg.norm(stored_features)
-                similarity = np.dot(query_features, stored_features)
-                similarities.append(similarity)
-            
-            # Use maximum similarity
-            max_similarity = max(similarities)
-            
-            if max_similarity > best_similarity:
-                best_similarity = max_similarity
-                best_match = person_id
-        
-        # Check threshold
-        if best_similarity >= self.similarity_threshold:
-            return best_match, best_similarity
+        if self.gallery_manager:
+            # Use advanced gallery manager
+            person_id, confidence, metadata = self.gallery_manager.identify_person(
+                query_features, track_id=track_id, auto_add=True
+            )
+            return person_id, confidence
         else:
-            return None, best_similarity
+            # Fallback to simple matching
+            gallery_features = getattr(self, 'gallery_features', {})
+            if not gallery_features:
+                return None, 0.0
+            
+            best_match = None
+            best_similarity = 0.0
+            
+            query_features = query_features / (np.linalg.norm(query_features) + 1e-8)
+            
+            for person_id, person_features_list in gallery_features.items():
+                # Compare with all stored features for this person
+                similarities = []
+                for stored_features in person_features_list:
+                    stored_features = stored_features / (np.linalg.norm(stored_features) + 1e-8)
+                    similarity = np.dot(query_features, stored_features)
+                    similarities.append(similarity)
+                
+                # Use maximum similarity
+                max_similarity = max(similarities) if similarities else 0.0
+                
+                if max_similarity > best_similarity:
+                    best_similarity = max_similarity
+                    best_match = person_id
+            
+            # Check threshold
+            if best_similarity >= self.similarity_threshold:
+                return best_match, best_similarity
+            else:
+                return None, best_similarity
     
     def clear_gallery(self):
         """Clear the gallery"""
-        self.gallery_features.clear()
-        self.gallery_ids.clear()
+        if self.gallery_manager:
+            self.gallery_manager._initialize_empty_gallery()
+        else:
+            if hasattr(self, 'gallery_features'):
+                self.gallery_features.clear()
     
     def get_gallery_summary(self) -> Dict:
         """Get summary of gallery contents"""
-        summary = {
-            'num_persons': len(self.gallery_features),
-            'person_ids': list(self.gallery_features.keys()),
-            'total_features': sum(len(features) for features in self.gallery_features.values())
-        }
-        return summary
+        if self.gallery_manager:
+            return self.gallery_manager.get_gallery_summary()
+        else:
+            gallery_features = getattr(self, 'gallery_features', {})
+            return {
+                'num_persons': len(gallery_features),
+                'person_ids': list(gallery_features.keys()),
+                'total_features': sum(len(features) for features in gallery_features.values())
+            }
     
     def is_model_loaded(self) -> bool:
         """Check if real model weights are loaded"""

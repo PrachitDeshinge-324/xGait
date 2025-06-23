@@ -90,6 +90,8 @@ def configure_system(args):
     # Video configuration
     config.video.input_path = args.input
     config.video.display_window = not args.no_display
+    if args.max_frames:
+        config.video.max_frames = args.max_frames
     
     # Feature flags
     if args.enable_all:
@@ -140,6 +142,8 @@ def main():
         print(f"🚶 GaitParsing: {'Enabled' if enable_gait else 'Disabled'}")
         print(f"🔍 Identification: {'Enabled' if enable_identification else 'Disabled'}")
         print(f"🐛 Debug mode: {'Enabled' if config.debug_mode else 'Disabled'}")
+        if config.video.max_frames:
+            print(f"🎬 Max frames: {config.video.max_frames} (testing mode)")
         print("=" * 60)
         
         # Initialize and run application
@@ -171,10 +175,31 @@ def main():
             id_stats = app.get_identification_stats()
             if id_stats:
                 print(f"🔍 Identification Results:")
-                print(f"   • Gallery persons: {id_stats['gallery_persons']}")
-                print(f"   • Identified tracks: {id_stats['identified_tracks']}")
-                print(f"   • Total tracks: {id_stats['total_tracks']}")
-                print(f"   • Identification rate: {id_stats['identification_rate']:.1f}%")
+                print(f"   • Gallery persons: {id_stats.get('persons', 0)}")
+                print(f"   • Total features: {id_stats.get('total_features', 0)}")
+                print(f"   • Avg features per person: {id_stats.get('avg_features_per_person', 0):.1f}")
+            
+            # Generate comprehensive gallery analysis
+            print(f"\n🎯 Gallery Analysis:")
+            print("-" * 40)
+            try:
+                analysis_dir = app.save_gallery_and_analyze()
+                if analysis_dir:
+                    print(f"   📁 Analysis saved to: {analysis_dir}")
+                
+                # Run feature separability analysis
+                separability = app.analyze_feature_separability()
+                if 'error' not in separability:
+                    print(f"   🎯 Separability Score: {separability['separability_score']:.3f}")
+                    print(f"   📈 Quality Assessment: {separability['quality_assessment']['overall']}")
+                
+                # Create final PCA visualization with all tracks
+                pca_path = app.run_pca_analysis(save_path="final_pca_analysis.png", show_plot=False)
+                if pca_path:
+                    print(f"   📊 Final PCA visualization: {pca_path}")
+                
+            except Exception as e:
+                print(f"   ⚠️  Gallery analysis failed: {e}")
         
         print("✅ Processing completed successfully!")
         return 0
@@ -184,9 +209,8 @@ def main():
         return 0
     except Exception as e:
         print(f"❌ Error: {e}")
-        if args.debug:
-            import traceback
-            traceback.print_exc()
+        import traceback
+        traceback.print_exc()
         return 1
     finally:
         # Ensure cleanup

@@ -105,6 +105,21 @@ class VideoConfig:
     output_path: Optional[str] = None
     display_window: bool = True
     save_output: bool = False
+    max_frames: Optional[int] = None  # Maximum number of frames to process (for testing)
+
+@dataclass
+class xgaitConfig:
+    """XGait-specific configuration"""
+    # Sequence buffer settings
+    sequence_buffer_size = 100
+    min_sequence_length = 10
+
+    # Feature extraction settings
+    xgait_extraction_interval = 5
+
+    # Similarity threshold for identification
+    similarity_threshold = 0.99
+    device: str = "cuda"
 
 @dataclass
 class SystemConfig:
@@ -112,7 +127,8 @@ class SystemConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     video: VideoConfig = field(default_factory=VideoConfig)
-    
+    xgait: xgaitConfig = field(default_factory=xgaitConfig)  # Ensure xgaitConfig is included here
+
     # System settings
     verbose: bool = True
     debug_mode: bool = False

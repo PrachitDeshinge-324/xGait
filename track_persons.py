@@ -24,20 +24,23 @@ import threading
 import queue
 import time
 from pathlib import Path
+from datetime import datetime
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for thread safety
 import matplotlib.pyplot as plt
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
 # Add src to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-from src.config import SystemConfig
+from src.config import SystemConfig, xgaitConfig
 from src.trackers.person_tracker import PersonTracker
 from src.utils.visualization import TrackingVisualizer
 from src.models.silhouette_model import SilhouetteExtractor
 from src.models.parsing_model import HumanParsingModel
 from src.models.xgait_model import XGaitInference
+from src.gallery.gallery_manager import GalleryManager
 
 # Import the simple inference pipeline
 from simple_inference_pipeline import create_simple_inference_pipeline
@@ -92,10 +95,21 @@ class PersonTrackingApp:
         
         # Initialize identification using the real XGait model (if gait parsing is enabled)
         if self.enable_identification:
+            # Initialize Gallery Manager for persistent storage and advanced features
+            # Using higher thresholds for XGait features which are naturally very similar
+            self.gallery_manager = GalleryManager(
+                gallery_dir="gallery_data",
+                similarity_threshold=0.9995,  # Very high threshold for XGait features
+                auto_add_threshold=0.999,     # Add new person if similarity < 0.999
+                max_features_per_person=20,
+                pca_components=2
+            )
+            
             if self.enable_gait_parsing and self.xgait_model:
-                # Use the real XGait model for identification
+                # Use the real XGait model for identification with gallery manager
                 self.identification_pipeline = self.xgait_model  # Direct reference to real model
-                print("✅ Identification pipeline initialized with real XGait model")
+                self.xgait_model.set_gallery_manager(self.gallery_manager)  # Connect gallery manager
+                print("✅ Identification pipeline initialized with real XGait model and advanced gallery")
             else:
                 # Fallback to simple pipeline if gait parsing is disabled
                 self.identification_pipeline = create_simple_inference_pipeline(
@@ -107,6 +121,7 @@ class PersonTrackingApp:
                 print("⚠️  Identification pipeline using placeholder (enable gait parsing for real XGait)")
         else:
             self.identification_pipeline = None
+            self.gallery_manager = None
             print("⚠️  Identification disabled")
         
         # Tracking statistics
@@ -130,9 +145,9 @@ class PersonTrackingApp:
         self.track_last_xgait_extraction = defaultdict(int)  # Track when we last extracted XGait features
         
         # Buffer management - increased for better sequence analysis
-        self.sequence_buffer_size = 30  # Number of frames to keep for XGait sequence analysis
-        self.min_sequence_length = 10   # Minimum frames needed for XGait extraction
-        self.xgait_extraction_interval = 15  # Extract XGait features every N frames per track
+        self.sequence_buffer_size = xgaitConfig.sequence_buffer_size  # Number of frames to keep for XGait sequence analysis
+        self.min_sequence_length = xgaitConfig.min_sequence_length   # Minimum frames needed for XGait extraction
+        self.xgait_extraction_interval = xgaitConfig.xgait_extraction_interval  # Extract XGait features every N frames per track
         
         print(f"🚀 Person Tracking App initialized")
         print(f"   Video: {config.video.input_path}")
@@ -162,12 +177,20 @@ class PersonTrackingApp:
         self.cleanup()
     
     def cleanup(self):
-        """Clean up resources"""
+        """Clean up resources and save gallery data"""
         if hasattr(self, 'parsing_executor') and self.parsing_executor:
             try:
                 self.parsing_executor.shutdown(wait=False)
             except:
                 pass
+        
+        # Save gallery data if available
+        if hasattr(self, 'gallery_manager') and self.gallery_manager:
+            try:
+                self.gallery_manager.cleanup()
+                print("💾 Gallery data saved")
+            except Exception as e:
+                print(f"⚠️  Failed to save gallery data: {e}")
     
     def process_video(self) -> None:
         """Process the input video and perform tracking"""
@@ -195,6 +218,12 @@ class PersonTrackingApp:
                     break
                 
                 frame_count += 1
+                
+                # Check max_frames limit
+                if self.config.video.max_frames and frame_count > self.config.video.max_frames:
+                    if self.config.verbose:
+                        print(f"🛑 Reached max frames limit: {self.config.video.max_frames}")
+                    break
                 
                 # Perform tracking
                 tracking_results = self.tracker.track_persons(frame, frame_count)
@@ -446,8 +475,8 @@ class PersonTrackingApp:
                     if len(features) >= 1:  # Use latest XGait features
                         latest_feature = features[-1]  # Most recent feature
                         
-                        # Use real XGait model for identification
-                        identified_person, confidence = self.identification_pipeline.identify_person(latest_feature)
+                        # Use real XGait model with gallery manager for identification
+                        identified_person, confidence = self.identification_pipeline.identify_person(latest_feature, track_id=track_id)
                         
                         if identified_person and confidence > 0.5:  # Only accept high confidence results
                             self.identification_results[track_id] = identified_person
@@ -729,8 +758,8 @@ class PersonTrackingApp:
                 # Use real XGait features if available
                 if track_id in self.track_gait_features and len(self.track_gait_features[track_id]) > 0:
                     latest_feature = self.track_gait_features[track_id][-1]  # Use most recent XGait features
-                    self.identification_pipeline.add_to_gallery(person_id, latest_feature)
-                    print(f"✅ Added '{person_id}' to gallery using real XGait features from track {track_id}")
+                    assigned_id = self.identification_pipeline.add_to_gallery(person_id, latest_feature, track_id=track_id)
+                    print(f"✅ Added '{assigned_id}' to gallery using real XGait features from track {track_id}")
                     return True
                 else:
                     print(f"❌ No XGait features available for track {track_id} (need at least {self.min_sequence_length} frames)")
@@ -1071,29 +1100,146 @@ class PersonTrackingApp:
         
         return sequence_info
     
-    def get_xgait_features_for_track(self, track_id: int) -> Optional[np.ndarray]:
-        """Get the most recent XGait features for a specific track"""
-        if track_id in self.track_gait_features and self.track_gait_features[track_id]:
-            return self.track_gait_features[track_id][-1]  # Return most recent features
-        return None
-    
     def get_xgait_statistics(self) -> Dict:
-        """Get comprehensive XGait processing statistics"""
-        total_tracks = len(self.track_silhouettes)
-        ready_tracks = sum(1 for track_id in self.track_silhouettes 
-                          if len(self.track_silhouettes[track_id]) >= self.min_sequence_length)
-        feature_tracks = len(self.track_gait_features)
+        """Get XGait processing statistics for all tracks"""
+        if not self.enable_gait_parsing:
+            return {}
         
-        total_features = sum(len(features) for features in self.track_gait_features.values())
-        avg_sequence_length = np.mean([len(seq) for seq in self.track_silhouettes.values()]) if self.track_silhouettes else 0
+        total_tracks = len(set(list(self.track_silhouettes.keys()) + list(self.track_parsing_masks.keys())))
+        sequence_ready_tracks = 0
+        tracks_with_features = len(self.track_gait_features)
+        total_sequences = sum(len(sequences) for sequences in self.track_silhouettes.values())
+        
+        # Calculate averages
+        avg_sequence_length = 0
+        if total_tracks > 0:
+            sequence_lengths = [len(sequences) for sequences in self.track_silhouettes.values()]
+            avg_sequence_length = sum(sequence_lengths) / len(sequence_lengths) if sequence_lengths else 0
+            
+            # Count tracks ready for feature extraction
+            for track_id in self.track_silhouettes.keys():
+                if len(self.track_silhouettes[track_id]) >= self.min_sequence_length:
+                    sequence_ready_tracks += 1
         
         return {
             'total_tracks': total_tracks,
-            'sequence_ready_tracks': ready_tracks,
-            'tracks_with_features': feature_tracks,
-            'total_extracted_features': total_features,
+            'sequence_ready_tracks': sequence_ready_tracks,
+            'tracks_with_features': tracks_with_features,
+            'total_sequences': total_sequences,
             'avg_sequence_length': avg_sequence_length,
             'min_sequence_length': self.min_sequence_length,
-            'sequence_buffer_size': self.sequence_buffer_size,
-            'extraction_interval': self.xgait_extraction_interval
+            'sequence_buffer_size': self.sequence_buffer_size
         }
+    
+    def save_gallery_and_analyze(self) -> None:
+        """Save gallery data and create comprehensive analysis"""
+        if not self.enable_identification or not self.gallery_manager:
+            print("⚠️  Gallery analysis not available - identification disabled")
+            return
+        
+        try:
+            # Save gallery data
+            self.gallery_manager.save_gallery()
+            
+            # Create analysis directory
+            analysis_dir = Path("gallery_analysis")
+            analysis_dir.mkdir(exist_ok=True)
+            
+            # Generate comprehensive report
+            report_path = analysis_dir / f"gallery_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            report = self.gallery_manager.create_detailed_report(str(report_path))
+            print(f"📄 Gallery report saved to {report_path}")
+            
+            # Create PCA visualization
+            pca_path = analysis_dir / f"pca_visualization_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            
+            # Include current tracks as query points if available
+            query_features = {}
+            if self.track_gait_features:
+                for track_id, features_list in self.track_gait_features.items():
+                    if features_list:
+                        query_features[track_id] = features_list[-1]  # Latest features
+            
+            saved_path = self.gallery_manager.visualize_feature_space(
+                save_path=str(pca_path),
+                show_plot=False,
+                query_features=query_features
+            )
+            
+            if saved_path:
+                print(f"📊 PCA visualization saved to {saved_path}")
+            
+            # Get separability analysis
+            separability = self.gallery_manager.analyze_separability()
+            if 'error' not in separability:
+                print(f"🎯 Feature Separability Analysis:")
+                print(f"   • Separability Score: {separability['separability_score']:.3f}")
+                print(f"   • Overall Quality: {separability['quality_assessment']['overall']}")
+                print(f"   • Intra-person Similarity: {separability['intra_person_similarity']['mean']:.3f}")
+                print(f"   • Inter-person Similarity: {separability['inter_person_similarity']['mean']:.3f}")
+                
+                if separability['quality_assessment']['recommendations']:
+                    print(f"💡 Recommendations:")
+                    for rec in separability['quality_assessment']['recommendations']:
+                        print(f"   • {rec}")
+            
+            # Summary statistics
+            summary = self.gallery_manager.get_gallery_summary()
+            print(f"\n📊 Gallery Summary:")
+            print(f"   • Total Persons: {summary['persons']}")
+            print(f"   • Total Features: {summary['total_features']}")
+            print(f"   • Avg Features/Person: {summary['avg_features_per_person']:.1f}")
+            
+            return analysis_dir
+            
+        except Exception as e:
+            print(f"❌ Error during gallery analysis: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def get_gallery_stats(self) -> Dict:
+        """Get comprehensive gallery statistics"""
+        if not self.enable_identification or not self.gallery_manager:
+            return {}
+        
+        return self.gallery_manager.get_gallery_summary()
+    
+    def run_pca_analysis(self, save_path: Optional[str] = None, show_plot: bool = False) -> Optional[str]:
+        """
+        Run PCA analysis on current gallery features
+        
+        Args:
+            save_path: Optional path to save the visualization
+            show_plot: Whether to display the plot
+            
+        Returns:
+            Path to saved visualization if save_path provided
+        """
+        if not self.enable_identification or not self.gallery_manager:
+            print("⚠️  PCA analysis not available - identification disabled")
+            return None
+        
+        try:
+            # Include current active tracks as query points
+            query_features = {}
+            if self.track_gait_features:
+                for track_id, features_list in self.track_gait_features.items():
+                    if features_list:
+                        query_features[track_id] = features_list[-1]  # Latest features
+            
+            return self.gallery_manager.visualize_feature_space(
+                save_path=save_path,
+                show_plot=show_plot,
+                query_features=query_features
+            )
+            
+        except Exception as e:
+            print(f"❌ Error during PCA analysis: {e}")
+            return None
+    
+    def analyze_feature_separability(self) -> Dict:
+        """Analyze separability of features in the gallery"""
+        if not self.enable_identification or not self.gallery_manager:
+            return {'error': 'Gallery analysis not available'}
+        
+        return self.gallery_manager.analyze_separability()

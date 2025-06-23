@@ -14,6 +14,7 @@ __all__ = [
     "ModelConfig", 
     "TrackerConfig",
     "VideoConfig",
+    "xgaitConfig",
     "PersonTracker",
     "ReIDModel",
     "create_reid_model",
