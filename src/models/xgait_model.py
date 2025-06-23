@@ -66,11 +66,11 @@ class TemporalPooling(nn.Module):
 
 
 class XGaitBackbone(nn.Module):
-    """XGait backbone network"""
+    """XGait backbone network - enhanced for multi-channel input"""
     def __init__(self, in_channels=1, base_channels=32):
         super(XGaitBackbone, self).__init__()
         
-        # Initial convolution
+        # Initial convolution - now supports both single channel (silhouettes) and multi-channel (sil+parsing)
         self.conv1 = Temporal3DConv(in_channels, base_channels, kernel_size=(1, 5, 5), padding=(0, 2, 2))
         
         # Spatial-temporal blocks
@@ -118,11 +118,12 @@ class XGaitBackbone(nn.Module):
 
 
 class XGaitModel(nn.Module):
-    """Complete XGait model with classification head"""
-    def __init__(self, num_classes=100, backbone_channels=32):
+    """Complete XGait model with classification head - supports multi-channel input"""
+    def __init__(self, num_classes=100, backbone_channels=32, in_channels=1):
         super(XGaitModel, self).__init__()
         
-        self.backbone = XGaitBackbone(in_channels=1, base_channels=backbone_channels)
+        # Support both single-channel (silhouettes) and multi-channel (silhouettes + parsing)
+        self.backbone = XGaitBackbone(in_channels=in_channels, base_channels=backbone_channels)
         
         # Classification head
         self.classifier = nn.Sequential(
@@ -158,17 +159,26 @@ class XGaitModel(nn.Module):
 class XGaitInference:
     """
     XGait inference engine for gait recognition
+    Enhanced for proper sequence handling and gait parsing integration
     """
     
     def __init__(self, model_path: Optional[str] = None, device: str = "cpu", num_classes: int = 100):
-        self.device = device
+        self.device = device if device != 'mps' else 'cpu'  # Force CPU for MPS compatibility
         self.num_classes = num_classes
-        self.model = XGaitModel(num_classes=num_classes).to(device)
+        
+        # Support adaptive input channels - will be determined by input data
+        self.model = XGaitModel(num_classes=num_classes, in_channels=2).to(self.device)  # Default to 2 channels for sil+parsing
+        self.fallback_model = XGaitModel(num_classes=num_classes, in_channels=1).to(self.device)  # Fallback for silhouettes only
+        
+        # Sequence parameters for proper XGait input
+        self.min_sequence_length = 10  # Minimum frames for reliable gait analysis
+        self.target_sequence_length = 30  # Target sequence length for XGait
+        self.sequence_stride = 2  # Frame stride for sequence sampling
         
         # Load weights if available
         if model_path and os.path.exists(model_path):
             try:
-                checkpoint = torch.load(model_path, map_location=device)
+                checkpoint = torch.load(model_path, map_location=self.device)
                 
                 # Handle different checkpoint formats
                 if 'model_state_dict' in checkpoint:
@@ -186,9 +196,15 @@ class XGaitInference:
                     else:
                         new_state_dict[k] = v
                 
-                self.model.load_state_dict(new_state_dict, strict=False)
-                logger.info(f"✅ Loaded XGait weights from {model_path}")
-                self.model_loaded = True
+                # Try loading weights for both models
+                try:
+                    self.model.load_state_dict(new_state_dict, strict=False)
+                    self.fallback_model.load_state_dict(new_state_dict, strict=False)
+                    logger.info(f"✅ Loaded XGait weights from {model_path}")
+                    self.model_loaded = True
+                except Exception as load_error:
+                    logger.warning(f"⚠️ Partial weight loading failed: {load_error}")
+                    self.model_loaded = False
             except Exception as e:
                 logger.warning(f"❌ Failed to load XGait weights: {e}")
                 self.model_loaded = False
@@ -196,7 +212,9 @@ class XGaitInference:
             logger.warning("⚠️  No XGait weights found, using random initialization")
             self.model_loaded = False
         
+        # Set both models to eval mode
         self.model.eval()
+        self.fallback_model.eval()
         
         # Gallery for known persons
         self.gallery_features = {}
@@ -205,28 +223,35 @@ class XGaitInference:
         # Similarity threshold for identification
         self.similarity_threshold = 0.7
     
-    def preprocess_gait_sequence(self, silhouettes: List[np.ndarray], target_frames: int = 30) -> torch.Tensor:
+    def preprocess_gait_sequence_with_parsing(self, silhouettes: List[np.ndarray], 
+                                            parsing_masks: List[np.ndarray] = None) -> torch.Tensor:
         """
-        Preprocess silhouette sequence for XGait input
+        Preprocess silhouette sequence with optional parsing masks for XGait input
         
         Args:
-            silhouettes: List of silhouette masks
-            target_frames: Target number of frames
+            silhouettes: List of silhouette masks (temporal sequence)
+            parsing_masks: Optional list of parsing masks for enhanced input
             
         Returns:
-            Preprocessed tensor of shape (1, 1, T, H, W)
+            Preprocessed tensor of shape (1, C, T, H, W) where C=1 for silhouettes or C=2 for sil+parsing
         """
         if not silhouettes:
             # Return dummy sequence
-            return torch.zeros(1, 1, target_frames, 64, 32, device=self.device)
+            channels = 2 if parsing_masks else 1
+            return torch.zeros(1, channels, self.target_sequence_length, 64, 32, device=self.device)
         
-        # Resize silhouettes to standard size
-        processed_silhouettes = []
-        for sil in silhouettes:
+        # Determine if we're using parsing-enhanced input
+        use_parsing = parsing_masks is not None and len(parsing_masks) == len(silhouettes)
+        channels = 2 if use_parsing else 1
+        
+        # Process silhouettes and parsing masks
+        processed_frames = []
+        
+        for i, sil in enumerate(silhouettes):
             if len(sil.shape) == 3:
                 sil = sil[:, :, 0]  # Take first channel if RGB
             
-            # Resize to 64x32
+            # Resize silhouette to 64x32
             sil_resized = torch.from_numpy(sil).float()
             sil_resized = F.interpolate(sil_resized.unsqueeze(0).unsqueeze(0), 
                                       size=(64, 32), mode='bilinear', align_corners=False)
@@ -236,31 +261,106 @@ class XGaitInference:
             if sil_resized.max().item() > 1:
                 sil_resized = sil_resized / 255.0
             
-            processed_silhouettes.append(sil_resized)
+            if use_parsing:
+                # Process parsing mask
+                parsing = parsing_masks[i]
+                if len(parsing.shape) == 3:
+                    parsing = parsing[:, :, 0]
+                
+                parsing_resized = torch.from_numpy(parsing).float()
+                parsing_resized = F.interpolate(parsing_resized.unsqueeze(0).unsqueeze(0),
+                                              size=(64, 32), mode='nearest')
+                parsing_resized = parsing_resized.squeeze()
+                
+                # Normalize parsing mask
+                if parsing_resized.max().item() > 1:
+                    parsing_resized = parsing_resized / 7.0  # 7 classes in gait parsing
+                
+                # Combine silhouette and parsing
+                frame = torch.stack([sil_resized, parsing_resized], dim=0)  # (2, 64, 32)
+            else:
+                frame = sil_resized.unsqueeze(0)  # (1, 64, 32)
+            
+            processed_frames.append(frame)
         
-        # Handle sequence length
-        if len(processed_silhouettes) >= target_frames:
-            # Sample frames uniformly
-            indices = np.linspace(0, len(processed_silhouettes) - 1, target_frames, dtype=int)
-            processed_silhouettes = [processed_silhouettes[i] for i in indices]
+        # Handle sequence length - ensure we have enough frames for gait analysis
+        if len(processed_frames) >= self.target_sequence_length:
+            # Sample frames uniformly with stride
+            indices = np.arange(0, len(processed_frames), self.sequence_stride)
+            if len(indices) > self.target_sequence_length:
+                indices = np.linspace(0, len(processed_frames) - 1, self.target_sequence_length, dtype=int)
+            processed_frames = [processed_frames[i] for i in indices[:self.target_sequence_length]]
         else:
-            # Repeat frames to reach target length
-            while len(processed_silhouettes) < target_frames:
-                processed_silhouettes.extend(processed_silhouettes)
-            processed_silhouettes = processed_silhouettes[:target_frames]
+            # If we don't have enough frames, repeat the sequence cyclically
+            while len(processed_frames) < self.target_sequence_length:
+                processed_frames.extend(processed_frames)
+            processed_frames = processed_frames[:self.target_sequence_length]
         
-        # Stack into tensor
-        sequence_tensor = torch.stack(processed_silhouettes, dim=0)  # (T, H, W)
-        sequence_tensor = sequence_tensor.unsqueeze(0).unsqueeze(0)  # (1, 1, T, H, W)
+        # Stack into tensor (C, T, H, W)
+        sequence_tensor = torch.stack(processed_frames, dim=1)  # (C, T, H, W)
+        sequence_tensor = sequence_tensor.unsqueeze(0)  # (1, C, T, H, W)
         
         return sequence_tensor.to(self.device)
-    
-    def extract_features(self, silhouette_sequences: List[List[np.ndarray]]) -> np.ndarray:
+
+    def preprocess_gait_sequence(self, silhouettes: List[np.ndarray], target_frames: int = 30) -> torch.Tensor:
         """
-        Extract XGait features from silhouette sequences
+        Preprocess silhouette sequence for XGait input (legacy method)
+        
+        Args:
+            silhouettes: List of silhouette masks
+            target_frames: Target number of frames
+            
+        Returns:
+            Preprocessed tensor of shape (1, 1, T, H, W)
+        """
+        # Use the enhanced method with no parsing masks
+        return self.preprocess_gait_sequence_with_parsing(silhouettes, None)
+
+    def extract_features_from_sequence(self, silhouettes: List[np.ndarray], 
+                                     parsing_masks: List[np.ndarray] = None) -> np.ndarray:
+        """
+        Extract XGait features from a single silhouette sequence with optional parsing
+        
+        Args:
+            silhouettes: List of silhouette masks (temporal sequence)
+            parsing_masks: Optional list of parsing masks
+            
+        Returns:
+            Feature vector of shape (feature_dim,)
+        """
+        if len(silhouettes) < self.min_sequence_length:
+            logger.warning(f"Sequence too short: {len(silhouettes)} < {self.min_sequence_length}")
+            # Return dummy features
+            dummy_features = np.random.randn(256) * 0.1
+            return dummy_features / np.linalg.norm(dummy_features)
+        
+        try:
+            with torch.no_grad():
+                # Preprocess sequence with parsing if available
+                input_tensor = self.preprocess_gait_sequence_with_parsing(silhouettes, parsing_masks)
+                
+                # Choose appropriate model based on input channels
+                use_parsing = parsing_masks is not None and len(parsing_masks) == len(silhouettes)
+                model_to_use = self.model if use_parsing else self.fallback_model
+                
+                # Extract features
+                feature_vector = model_to_use(input_tensor, return_features=True)
+                return feature_vector.cpu().numpy().flatten()
+                
+        except Exception as e:
+            logger.error(f"Error extracting XGait features: {e}")
+            # Fallback to dummy features
+            dummy_features = np.random.randn(256) * 0.1
+            return dummy_features / np.linalg.norm(dummy_features)
+    
+    def extract_features(self, silhouette_sequences: List[List[np.ndarray]], 
+                        parsing_sequences: List[List[np.ndarray]] = None) -> np.ndarray:
+        """
+        Extract XGait features from multiple silhouette sequences
         
         Args:
             silhouette_sequences: List of silhouette sequences
+            parsing_sequences: Optional list of parsing sequences
             
         Returns:
             Feature array of shape (N, feature_dim)
@@ -270,22 +370,10 @@ class XGaitInference:
         
         features = []
         
-        with torch.no_grad():
-            for sequence in silhouette_sequences:
-                try:
-                    # Preprocess sequence
-                    input_tensor = self.preprocess_gait_sequence(sequence)
-                    
-                    # Extract features
-                    feature_vector = self.model(input_tensor, return_features=True)
-                    features.append(feature_vector.cpu().numpy().flatten())
-                    
-                except Exception as e:
-                    logger.error(f"Error extracting XGait features: {e}")
-                    # Fallback to dummy features
-                    dummy_features = np.random.randn(256) * 0.1
-                    dummy_features = dummy_features / np.linalg.norm(dummy_features)
-                    features.append(dummy_features)
+        for i, sequence in enumerate(silhouette_sequences):
+            parsing_seq = parsing_sequences[i] if parsing_sequences and i < len(parsing_sequences) else None
+            feature_vector = self.extract_features_from_sequence(sequence, parsing_seq)
+            features.append(feature_vector)
         
         return np.array(features)
     

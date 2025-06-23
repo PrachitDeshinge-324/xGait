@@ -1,674 +1,537 @@
+#!/usr/bin/env python3
 """
-Improved Human Parsing Model
-Combines semantic segmentation with pose estimation for detailed human part segmentation
+Human Parsing Model using GaitParsing U²-Net implementation
+Based on: https://github.com/wzb-bupt/GaitParsing
 """
+
+import cv2
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
-import cv2
-import numpy as np
-import os
+from torch.autograd import Variable
 from pathlib import Path
-from typing import List, Union, Optional, Tuple, Dict
-import logging
 
-logger = logging.getLogger(__name__)
+# U²-Net Architecture Implementation
+class REBNCONV(nn.Module):
+    def __init__(self, in_ch=3, out_ch=3, dirate=1):
+        super(REBNCONV, self).__init__()
+        self.conv_s1 = nn.Conv2d(in_ch, out_ch, 3, padding=1*dirate, dilation=1*dirate)
+        self.bn_s1 = nn.BatchNorm2d(out_ch)
+        self.relu_s1 = nn.ReLU(inplace=True)
 
-
-class ASPPModule(nn.Module):
-    """Atrous Spatial Pyramid Pooling module"""
-    def __init__(self, inplanes, planes, kernel_size, padding, dilation):
-        super(ASPPModule, self).__init__()
-        self.atrous_conv = nn.Conv2d(inplanes, planes, kernel_size=kernel_size,
-                                   stride=1, padding=padding, dilation=dilation, bias=False)
-        self.bn = nn.BatchNorm2d(planes)
-        self.relu = nn.ReLU()
-    
     def forward(self, x):
-        x = self.atrous_conv(x)
-        x = self.bn(x)
-        return self.relu(x)
+        hx = x
+        xout = self.relu_s1(self.bn_s1(self.conv_s1(hx)))
+        return xout
 
+def _upsample_like(src, tar):
+    """Upsample tensor 'src' to have the same spatial size with tensor 'tar'"""
+    src = F.interpolate(src, size=tar.shape[2:], mode='bilinear', align_corners=False)
+    return src
 
-class ASPP(nn.Module):
-    """Atrous Spatial Pyramid Pooling"""
-    def __init__(self, inplanes=2048, outplanes=256):
-        super(ASPP, self).__init__()
+class RSU7(nn.Module):
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3):
+        super(RSU7, self).__init__()
         
-        dilations = [1, 6, 12, 18]
+        self.rebnconvin = REBNCONV(in_ch, out_ch, dirate=1)
         
-        self.aspp1 = ASPPModule(inplanes, outplanes, 1, padding=0, dilation=dilations[0])
-        self.aspp2 = ASPPModule(inplanes, outplanes, 3, padding=dilations[1], dilation=dilations[1])
-        self.aspp3 = ASPPModule(inplanes, outplanes, 3, padding=dilations[2], dilation=dilations[2])
-        self.aspp4 = ASPPModule(inplanes, outplanes, 3, padding=dilations[3], dilation=dilations[3])
+        self.rebnconv1 = REBNCONV(out_ch, mid_ch, dirate=1)
+        self.pool1 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
         
-        self.global_avg_pool = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Conv2d(inplanes, outplanes, 1, stride=1, bias=False),
-            nn.BatchNorm2d(outplanes),
-            nn.ReLU()
-        )
+        self.rebnconv2 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.pool2 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
         
-        self.conv1 = nn.Conv2d(outplanes * 5, outplanes, 1, bias=False)
-        self.bn1 = nn.BatchNorm2d(outplanes)
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.5)
-    
+        self.rebnconv3 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.pool3 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.rebnconv4 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.pool4 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.rebnconv5 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.pool5 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.rebnconv6 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.rebnconv7 = REBNCONV(mid_ch, mid_ch, dirate=2)
+        
+        self.rebnconv6d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv5d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv4d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv3d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv2d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv1d = REBNCONV(mid_ch*2, out_ch, dirate=1)
+
     def forward(self, x):
-        x1 = self.aspp1(x)
-        x2 = self.aspp2(x)
-        x3 = self.aspp3(x)
-        x4 = self.aspp4(x)
-        x5 = self.global_avg_pool(x)
-        x5 = F.interpolate(x5, size=x4.size()[2:], mode='bilinear', align_corners=True)
+        hx = x
+        hxin = self.rebnconvin(hx)
         
-        x = torch.cat((x1, x2, x3, x4, x5), dim=1)
+        hx1 = self.rebnconv1(hxin)
+        hx = self.pool1(hx1)
         
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
+        hx2 = self.rebnconv2(hx)
+        hx = self.pool2(hx2)
         
-        return self.dropout(x)
+        hx3 = self.rebnconv3(hx)
+        hx = self.pool3(hx3)
+        
+        hx4 = self.rebnconv4(hx)
+        hx = self.pool4(hx4)
+        
+        hx5 = self.rebnconv5(hx)
+        hx = self.pool5(hx5)
+        
+        hx6 = self.rebnconv6(hx)
+        hx7 = self.rebnconv7(hx6)
+        
+        hx6d = self.rebnconv6d(torch.cat((hx7, hx6), 1))
+        hx6dup = _upsample_like(hx6d, hx5)
+        
+        hx5d = self.rebnconv5d(torch.cat((hx6dup, hx5), 1))
+        hx5dup = _upsample_like(hx5d, hx4)
+        
+        hx4d = self.rebnconv4d(torch.cat((hx5dup, hx4), 1))
+        hx4dup = _upsample_like(hx4d, hx3)
+        
+        hx3d = self.rebnconv3d(torch.cat((hx4dup, hx3), 1))
+        hx3dup = _upsample_like(hx3d, hx2)
+        
+        hx2d = self.rebnconv2d(torch.cat((hx3dup, hx2), 1))
+        hx2dup = _upsample_like(hx2d, hx1)
+        
+        hx1d = self.rebnconv1d(torch.cat((hx2dup, hx1), 1))
+        
+        return hx1d + hxin
 
+class RSU6(nn.Module):
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3):
+        super(RSU6, self).__init__()
+        
+        self.rebnconvin = REBNCONV(in_ch, out_ch, dirate=1)
+        
+        self.rebnconv1 = REBNCONV(out_ch, mid_ch, dirate=1)
+        self.pool1 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.rebnconv2 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.pool2 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.rebnconv3 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.pool3 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.rebnconv4 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.pool4 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.rebnconv5 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.rebnconv6 = REBNCONV(mid_ch, mid_ch, dirate=2)
+        
+        self.rebnconv5d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv4d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv3d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv2d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv1d = REBNCONV(mid_ch*2, out_ch, dirate=1)
 
-class Bottleneck(nn.Module):
-    """Bottleneck block for ResNet"""
-    expansion = 4
-    
-    def __init__(self, inplanes, planes, stride=1, dilation=1, downsample=None):
-        super(Bottleneck, self).__init__()
-        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(planes)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
-                               dilation=dilation, padding=dilation, bias=False)
-        self.bn2 = nn.BatchNorm2d(planes)
-        self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False)
-        self.bn3 = nn.BatchNorm2d(planes * 4)
-        self.relu = nn.ReLU(inplace=True)
-        self.downsample = downsample
-        self.stride = stride
-        self.dilation = dilation
-    
     def forward(self, x):
-        residual = x
+        hx = x
+        hxin = self.rebnconvin(hx)
         
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
+        hx1 = self.rebnconv1(hxin)
+        hx = self.pool1(hx1)
         
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.relu(out)
+        hx2 = self.rebnconv2(hx)
+        hx = self.pool2(hx2)
         
-        out = self.conv3(out)
-        out = self.bn3(out)
+        hx3 = self.rebnconv3(hx)
+        hx = self.pool3(hx3)
         
-        if self.downsample is not None:
-            residual = self.downsample(x)
+        hx4 = self.rebnconv4(hx)
+        hx = self.pool4(hx4)
         
-        out += residual
-        out = self.relu(out)
+        hx5 = self.rebnconv5(hx)
+        hx6 = self.rebnconv6(hx5)
         
-        return out
+        hx5d = self.rebnconv5d(torch.cat((hx6, hx5), 1))
+        hx5dup = _upsample_like(hx5d, hx4)
+        
+        hx4d = self.rebnconv4d(torch.cat((hx5dup, hx4), 1))
+        hx4dup = _upsample_like(hx4d, hx3)
+        
+        hx3d = self.rebnconv3d(torch.cat((hx4dup, hx3), 1))
+        hx3dup = _upsample_like(hx3d, hx2)
+        
+        hx2d = self.rebnconv2d(torch.cat((hx3dup, hx2), 1))
+        hx2dup = _upsample_like(hx2d, hx1)
+        
+        hx1d = self.rebnconv1d(torch.cat((hx2dup, hx1), 1))
+        
+        return hx1d + hxin
 
+class RSU5(nn.Module):
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3):
+        super(RSU5, self).__init__()
+        
+        self.rebnconvin = REBNCONV(in_ch, out_ch, dirate=1)
+        
+        self.rebnconv1 = REBNCONV(out_ch, mid_ch, dirate=1)
+        self.pool1 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.rebnconv2 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.pool2 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.rebnconv3 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.pool3 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.rebnconv4 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.rebnconv5 = REBNCONV(mid_ch, mid_ch, dirate=2)
+        
+        self.rebnconv4d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv3d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv2d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv1d = REBNCONV(mid_ch*2, out_ch, dirate=1)
 
-class ResNet(nn.Module):
-    """Modified ResNet backbone for SCHP"""
-    def __init__(self, block, layers, num_classes=20):
-        super(ResNet, self).__init__()
-        self.inplanes = 64
-        
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=1, dilation=2)
-        
-        self.aspp = ASPP(inplanes=2048, outplanes=256)
-        
-        self.classifier = nn.Sequential(
-            nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.1),
-            nn.Conv2d(256, num_classes, kernel_size=1)
-        )
-    
-    def _make_layer(self, block, planes, blocks, stride=1, dilation=1):
-        downsample = None
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                nn.Conv2d(self.inplanes, planes * block.expansion,
-                          kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(planes * block.expansion),
-            )
-        
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, dilation, downsample))
-        self.inplanes = planes * block.expansion
-        for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes, dilation=dilation))
-        
-        return nn.Sequential(*layers)
-    
     def forward(self, x):
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
+        hx = x
+        hxin = self.rebnconvin(hx)
         
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
+        hx1 = self.rebnconv1(hxin)
+        hx = self.pool1(hx1)
         
-        x = self.aspp(x)
-        x = self.classifier(x)
+        hx2 = self.rebnconv2(hx)
+        hx = self.pool2(hx2)
         
-        return x
+        hx3 = self.rebnconv3(hx)
+        hx = self.pool3(hx3)
+        
+        hx4 = self.rebnconv4(hx)
+        hx5 = self.rebnconv5(hx4)
+        
+        hx4d = self.rebnconv4d(torch.cat((hx5, hx4), 1))
+        hx4dup = _upsample_like(hx4d, hx3)
+        
+        hx3d = self.rebnconv3d(torch.cat((hx4dup, hx3), 1))
+        hx3dup = _upsample_like(hx3d, hx2)
+        
+        hx2d = self.rebnconv2d(torch.cat((hx3dup, hx2), 1))
+        hx2dup = _upsample_like(hx2d, hx1)
+        
+        hx1d = self.rebnconv1d(torch.cat((hx2dup, hx1), 1))
+        
+        return hx1d + hxin
 
+class RSU4(nn.Module):
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3):
+        super(RSU4, self).__init__()
+        
+        self.rebnconvin = REBNCONV(in_ch, out_ch, dirate=1)
+        
+        self.rebnconv1 = REBNCONV(out_ch, mid_ch, dirate=1)
+        self.pool1 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.rebnconv2 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.pool2 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.rebnconv3 = REBNCONV(mid_ch, mid_ch, dirate=1)
+        self.rebnconv4 = REBNCONV(mid_ch, mid_ch, dirate=2)
+        
+        self.rebnconv3d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv2d = REBNCONV(mid_ch*2, mid_ch, dirate=1)
+        self.rebnconv1d = REBNCONV(mid_ch*2, out_ch, dirate=1)
 
-class SCHPModel(nn.Module):
-    """Self-Correction for Human Parsing Model"""
-    def __init__(self, num_classes=20):
-        super(SCHPModel, self).__init__()
-        
-        # ResNet-101 backbone
-        self.backbone = ResNet(Bottleneck, [3, 4, 23, 3], num_classes=num_classes)
-        
-        # Self-correction modules
-        self.edge_layers = nn.ModuleList([
-            nn.Conv2d(64, 1, kernel_size=3, padding=1),
-            nn.Conv2d(256, 1, kernel_size=3, padding=1),
-            nn.Conv2d(512, 1, kernel_size=3, padding=1),
-            nn.Conv2d(1024, 1, kernel_size=3, padding=1),
-            nn.Conv2d(2048, 1, kernel_size=3, padding=1)
-        ])
-        
     def forward(self, x):
-        # Get features from backbone
-        features = []
+        hx = x
+        hxin = self.rebnconvin(hx)
         
-        # Forward through backbone with feature extraction
-        feat = self.backbone.conv1(x)
-        feat = self.backbone.bn1(feat)
-        feat = self.backbone.relu(feat)
-        feat = self.backbone.maxpool(feat)
-        features.append(feat)
+        hx1 = self.rebnconv1(hxin)
+        hx = self.pool1(hx1)
         
-        feat = self.backbone.layer1(feat)
-        features.append(feat)
+        hx2 = self.rebnconv2(hx)
+        hx = self.pool2(hx2)
         
-        feat = self.backbone.layer2(feat)
-        features.append(feat)
+        hx3 = self.rebnconv3(hx)
+        hx4 = self.rebnconv4(hx3)
         
-        feat = self.backbone.layer3(feat)
-        features.append(feat)
+        hx3d = self.rebnconv3d(torch.cat((hx4, hx3), 1))
+        hx3dup = _upsample_like(hx3d, hx2)
         
-        feat = self.backbone.layer4(feat)
-        features.append(feat)
+        hx2d = self.rebnconv2d(torch.cat((hx3dup, hx2), 1))
+        hx2dup = _upsample_like(hx2d, hx1)
         
-        # ASPP and classifier
-        feat = self.backbone.aspp(feat)
-        parsing = self.backbone.classifier(feat)
+        hx1d = self.rebnconv1d(torch.cat((hx2dup, hx1), 1))
         
-        # Generate edge maps
-        edges = []
-        for i, edge_layer in enumerate(self.edge_layers):
-            edge = edge_layer(features[i])
-            edges.append(edge)
-        
-        return parsing, edges
+        return hx1d + hxin
 
+class RSU4F(nn.Module):
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3):
+        super(RSU4F, self).__init__()
+        
+        self.rebnconvin = REBNCONV(in_ch, out_ch, dirate=1)
+        
+        self.rebnconv1 = REBNCONV(out_ch, mid_ch, dirate=1)
+        self.rebnconv2 = REBNCONV(mid_ch, mid_ch, dirate=2)
+        self.rebnconv3 = REBNCONV(mid_ch, mid_ch, dirate=4)
+        self.rebnconv4 = REBNCONV(mid_ch, mid_ch, dirate=8)
+        
+        self.rebnconv3d = REBNCONV(mid_ch*2, mid_ch, dirate=4)
+        self.rebnconv2d = REBNCONV(mid_ch*2, mid_ch, dirate=2)
+        self.rebnconv1d = REBNCONV(mid_ch*2, out_ch, dirate=1)
+
+    def forward(self, x):
+        hx = x
+        hxin = self.rebnconvin(hx)
+        
+        hx1 = self.rebnconv1(hxin)
+        hx2 = self.rebnconv2(hx1)
+        hx3 = self.rebnconv3(hx2)
+        hx4 = self.rebnconv4(hx3)
+        
+        hx3d = self.rebnconv3d(torch.cat((hx4, hx3), 1))
+        hx2d = self.rebnconv2d(torch.cat((hx3d, hx2), 1))
+        hx1d = self.rebnconv1d(torch.cat((hx2d, hx1), 1))
+        
+        return hx1d + hxin
+
+class U2NET(nn.Module):
+    """U²-Net for human parsing based on GaitParsing implementation"""
+    
+    def __init__(self, in_ch, out_ch):
+        super(U2NET, self).__init__()
+        
+        self.stage1 = RSU7(in_ch, 32, 64)
+        self.pool12 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.stage2 = RSU6(64, 32, 128)
+        self.pool23 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.stage3 = RSU5(128, 64, 256)
+        self.pool34 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.stage4 = RSU4(256, 128, 512)
+        self.pool45 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.stage5 = RSU4F(512, 256, 512)
+        self.pool56 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
+        
+        self.stage6 = RSU4F(512, 256, 512)
+        
+        # Decoder
+        self.stage5d = RSU4F(1024, 256, 512)
+        self.stage4d = RSU4(1024, 128, 256)
+        self.stage3d = RSU5(512, 64, 128)
+        self.stage2d = RSU6(256, 32, 64)
+        self.stage1d = RSU7(128, 16, 64)
+        
+        self.side1 = nn.Conv2d(64, out_ch, 3, padding=1)
+        self.side2 = nn.Conv2d(64, out_ch, 3, padding=1)
+        self.side3 = nn.Conv2d(128, out_ch, 3, padding=1)
+        self.side4 = nn.Conv2d(256, out_ch, 3, padding=1)
+        self.side5 = nn.Conv2d(512, out_ch, 3, padding=1)
+        self.side6 = nn.Conv2d(512, out_ch, 3, padding=1)
+        
+        self.outconv = nn.Conv2d(6*out_ch, out_ch, 1)
+
+    def forward(self, x):
+        hx = x
+        
+        # Stage 1
+        hx1 = self.stage1(hx)
+        hx = self.pool12(hx1)
+        
+        # Stage 2
+        hx2 = self.stage2(hx)
+        hx = self.pool23(hx2)
+        
+        # Stage 3
+        hx3 = self.stage3(hx)
+        hx = self.pool34(hx3)
+        
+        # Stage 4
+        hx4 = self.stage4(hx)
+        hx = self.pool45(hx4)
+        
+        # Stage 5
+        hx5 = self.stage5(hx)
+        hx = self.pool56(hx5)
+        
+        # Stage 6
+        hx6 = self.stage6(hx)
+        hx6up = _upsample_like(hx6, hx5)
+        
+        # Decoder
+        hx5d = self.stage5d(torch.cat((hx6up, hx5), 1))
+        hx5dup = _upsample_like(hx5d, hx4)
+        
+        hx4d = self.stage4d(torch.cat((hx5dup, hx4), 1))
+        hx4dup = _upsample_like(hx4d, hx3)
+        
+        hx3d = self.stage3d(torch.cat((hx4dup, hx3), 1))
+        hx3dup = _upsample_like(hx3d, hx2)
+        
+        hx2d = self.stage2d(torch.cat((hx3dup, hx2), 1))
+        hx2dup = _upsample_like(hx2d, hx1)
+        
+        hx1d = self.stage1d(torch.cat((hx2dup, hx1), 1))
+        
+        # Side outputs
+        d1 = self.side1(hx1d)
+        
+        d2 = self.side2(hx2d)
+        d2 = _upsample_like(d2, d1)
+        
+        d3 = self.side3(hx3d)
+        d3 = _upsample_like(d3, d1)
+        
+        d4 = self.side4(hx4d)
+        d4 = _upsample_like(d4, d1)
+        
+        d5 = self.side5(hx5d)
+        d5 = _upsample_like(d5, d1)
+        
+        d6 = self.side6(hx6)
+        d6 = _upsample_like(d6, d1)
+        
+        d0 = self.outconv(torch.cat((d1, d2, d3, d4, d5, d6), 1))
+        
+        return d0, d1, d2, d3, d4, d5, d6
 
 class HumanParsingModel:
-    """
-    Improved human parsing using semantic segmentation + pose estimation
-    """
+    """Human Parsing Model using GaitParsing U²-Net implementation"""
     
-    # Human parsing labels
-    LABELS = {
-        0: 'background',
-        1: 'hat',
-        2: 'hair',
-        3: 'glove',
-        4: 'sunglasses',
-        5: 'upperclothes',
-        6: 'dress',
-        7: 'coat',
-        8: 'socks',
-        9: 'pants',
-        10: 'jumpsuits',
-        11: 'scarf',
-        12: 'skirt',
-        13: 'face',
-        14: 'left_arm',
-        15: 'right_arm',
-        16: 'left_leg',
-        17: 'right_leg',
-        18: 'left_shoe',
-        19: 'right_shoe'
-    }
-    
-    def __init__(self, model_path: Optional[str] = None, device: str = "cpu", num_classes: int = 20):
+    def __init__(self, model_path='weights/parsing_u2net.pth', device='cpu'):
+        self.input_height = 144
+        self.input_width = 96
+        self.transform = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        self.model_path = model_path
         self.device = device
-        self.num_classes = num_classes
         
-        # Load semantic segmentation model (DeepLabV3)
+        # GaitParsing class definitions (7 classes for gait parsing)
+        self.get_class_names = [
+            'background', 'head', 'body', 'r_arm', 'l_arm', 'r_leg', 'l_leg'
+        ]
+        
+        self.get_class_colors = [
+            [0, 0, 0],       # background
+            [255, 0, 0],     # head
+            [255, 255, 0],   # body  
+            [0, 0, 255],     # r_arm
+            [255, 0, 255],   # l_arm
+            [0, 255, 0],     # r_leg
+            [0, 255, 255]    # l_leg
+        ]
+        
+        self.num_classes = len(self.get_class_names)
+        self.palette_idx = np.array(self.get_class_colors)
+        
+        self.model = None
+        self._load_model()
+
+    def _load_model(self):
+        """Load the U²-Net model with pretrained weights"""
         try:
-            from torchvision.models.segmentation import deeplabv3_resnet101
-            self.seg_model = deeplabv3_resnet101(weights='DEFAULT')
-            self.seg_model.eval()
-            self.seg_model.to(device)
-            logger.info("✅ Loaded DeepLabV3 for base segmentation")
-            self.seg_available = True
-        except Exception as e:
-            logger.warning(f"❌ Failed to load segmentation model: {e}")
-            self.seg_model = None
-            self.seg_available = False
-        
-        # Load pose estimation model
-        try:
-            import mediapipe as mp
-            self.mp_pose = mp.solutions.pose
-            self.pose = self.mp_pose.Pose(
-                static_image_mode=True,
-                model_complexity=2,
-                enable_segmentation=True,
-                min_detection_confidence=0.5
-            )
-            self.pose_available = True
-            logger.info("✅ Loaded MediaPipe pose estimation")
-        except Exception as e:
-            logger.warning(f"❌ MediaPipe not available: {e}")
-            self.pose_available = False
-        
-        self.model_loaded = True  # Always true for this implementation
-        
-        # Preprocessing for segmentation
-        self.transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize((512, 512)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                               std=[0.229, 0.224, 0.225])
-        ])
-    
-    def extract_parsing(self, crops: List[np.ndarray]) -> List[np.ndarray]:
-        """Extract human parsing from person crops"""
-        if not crops:
-            return []
-        
-        parsing_masks = []
-        
-        for crop in crops:
-            try:
-                # Get base person segmentation
-                person_mask = self._get_person_segmentation(crop)
-                
-                # Get pose-based parsing if available
-                if self.pose_available:
-                    parsing_mask = self._get_pose_based_parsing(crop, person_mask)
-                else:
-                    parsing_mask = self._get_rule_based_parsing(crop, person_mask)
-                
-                parsing_masks.append(parsing_mask)
-                
-            except Exception as e:
-                logger.error(f"Error extracting parsing: {e}")
-                # Fallback to rule-based parsing
-                h, w = crop.shape[:2]
-                fallback_mask = self._create_simple_parsing(h, w)
-                parsing_masks.append(fallback_mask)
-        
-        return parsing_masks
-    
-    def _get_person_segmentation(self, crop):
-        """Get person segmentation using DeepLabV3"""
-        if not self.seg_available:
-            h, w = crop.shape[:2]
-            return np.ones((h, w), dtype=np.uint8)
-        
-        # Preprocess
-        crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-        input_tensor = self.transform(crop_rgb).unsqueeze(0).to(self.device)
-        
-        with torch.no_grad():
-            output = self.seg_model(input_tensor)['out'][0]
-            # Person class is 15 in COCO classes
-            person_logits = output[15]  
-            person_prob = torch.sigmoid(person_logits)
+            # Initialize U²-Net with 3 input channels (RGB) and num_classes output channels
+            self.model = U2NET(3, self.num_classes)
             
-            # Resize to original size
-            h, w = crop.shape[:2]
-            person_prob = F.interpolate(
-                person_prob.unsqueeze(0).unsqueeze(0), 
-                size=(h, w), 
-                mode='bilinear'
-            )[0, 0]
-            
-            person_mask = (person_prob > 0.5).cpu().numpy().astype(np.uint8)
-        
-        return person_mask
-    
-    def _get_pose_based_parsing(self, crop, person_mask):
-        """Use MediaPipe pose to create detailed parsing"""
-        try:
-            # Convert to RGB
-            crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-            
-            # Get pose landmarks
-            results = self.pose.process(crop_rgb)
-            
-            h, w = crop.shape[:2]
-            parsing_mask = np.zeros((h, w), dtype=np.uint8)
-            
-            if results.pose_landmarks:
-                landmarks = results.pose_landmarks.landmark
-                
-                # Create regions based on pose landmarks
-                parsing_mask = self._create_pose_regions(landmarks, h, w, person_mask)
+            # Load pretrained weights
+            if Path(self.model_path).exists():
+                state_dict = torch.load(self.model_path, map_location=self.device)
+                self.model.load_state_dict(state_dict)
+                print(f"✅ Loaded GaitParsing weights from {self.model_path}")
             else:
-                # Fallback if no pose detected
-                parsing_mask = self._get_rule_based_parsing(crop, person_mask)
+                print(f"⚠️  Model weights not found at {self.model_path}")
+                print("   Using randomly initialized weights")
             
-            return parsing_mask
+            self.model.eval()
             
+            # Move to device
+            if self.device != 'cpu' and torch.cuda.is_available():
+                self.model.cuda()
+            else:
+                self.model.to(self.device)
+                
         except Exception as e:
-            logger.error(f"Pose parsing error: {e}")
-            return self._get_rule_based_parsing(crop, person_mask)
-    
-    def _create_pose_regions(self, landmarks, h, w, person_mask):
-        """Create parsing regions based on pose landmarks"""
-        parsing_mask = np.zeros((h, w), dtype=np.uint8)
-        
-        # Convert landmarks to pixel coordinates
-        def get_point(landmark):
-            return int(landmark.x * w), int(landmark.y * h)
-        
+            print(f"❌ Failed to load parsing model: {e}")
+            self.model = None
+
+    def is_model_loaded(self):
+        """Check if model is properly loaded"""
+        return self.model is not None
+
+    def extract_parsing(self, input_images):
+        """Extract human parsing masks from input images"""
+        if self.model is None:
+            print("❌ Model not loaded")
+            return []
+
         try:
-            # Get key points
-            nose = get_point(landmarks[0])
-            left_eye = get_point(landmarks[2])
-            right_eye = get_point(landmarks[5])
-            left_ear = get_point(landmarks[7])
-            right_ear = get_point(landmarks[8])
-            left_shoulder = get_point(landmarks[11])
-            right_shoulder = get_point(landmarks[12])
-            left_elbow = get_point(landmarks[13])
-            right_elbow = get_point(landmarks[14])
-            left_wrist = get_point(landmarks[15])
-            right_wrist = get_point(landmarks[16])
-            left_hip = get_point(landmarks[23])
-            right_hip = get_point(landmarks[24])
-            left_knee = get_point(landmarks[25])
-            right_knee = get_point(landmarks[26])
-            left_ankle = get_point(landmarks[27])
-            right_ankle = get_point(landmarks[28])
+            batch_imgs = []
+            batch_parsing = []
             
-            # Face region (including hair)
-            face_center = ((left_eye[0] + right_eye[0]) // 2, (left_eye[1] + right_eye[1]) // 2)
-            face_radius = max(abs(left_ear[0] - right_ear[0]), abs(nose[1] - left_eye[1])) // 2
-            cv2.circle(parsing_mask, face_center, int(face_radius * 1.2), 13, -1)  # face
-            cv2.circle(parsing_mask, (face_center[0], face_center[1] - face_radius), 
-                      int(face_radius * 0.8), 2, -1)  # hair
+            # Prepare batch
+            for i, img in enumerate(input_images):
+                # Resize to model input size
+                crop_img = cv2.resize(img, (self.input_width, self.input_height), 
+                                    interpolation=cv2.INTER_LINEAR)
+                
+                # Convert to tensor and normalize
+                crop_img = torch.from_numpy(crop_img.transpose((2, 0, 1)))
+                crop_img = self.transform(crop_img.float().div(255.0))
+                crop_img = crop_img.view(1, crop_img.shape[0], crop_img.shape[1], crop_img.shape[2])
+                
+                if i == 0:
+                    batch_imgs = crop_img
+                else:
+                    batch_imgs = torch.cat((batch_imgs, crop_img), 0)
             
-            # Torso region
-            torso_points = np.array([left_shoulder, right_shoulder, right_hip, left_hip])
-            cv2.fillPoly(parsing_mask, [torso_points], 5)  # upperclothes
+            # Move to device
+            if self.device != 'cpu' and torch.cuda.is_available():
+                batch_imgs = batch_imgs.cuda()
+            else:
+                batch_imgs = batch_imgs.to(self.device)
             
-            # Arms
-            # Left arm
-            left_arm_points = np.array([left_shoulder, left_elbow, left_wrist])
-            for i in range(len(left_arm_points) - 1):
-                cv2.line(parsing_mask, tuple(left_arm_points[i]), tuple(left_arm_points[i+1]), 14, 15)
+            # Forward pass
+            with torch.no_grad():
+                outputs, _, _, _, _, _, _ = self.model(batch_imgs)
+                outputs = outputs.cpu()
             
-            # Right arm  
-            right_arm_points = np.array([right_shoulder, right_elbow, right_wrist])
-            for i in range(len(right_arm_points) - 1):
-                cv2.line(parsing_mask, tuple(right_arm_points[i]), tuple(right_arm_points[i+1]), 15, 15)
+            # Process outputs
+            for i, img in enumerate(input_images):
+                img_height, img_width = img.shape[:2]
+                prediction = outputs[i, :, :, :].data.numpy()
+                
+                # Convert prediction to colored parsing mask
+                result = np.zeros((self.input_height, self.input_width, 3))
+                for h in range(prediction.shape[1]):
+                    for w in range(prediction.shape[2]):
+                        result[h][w] = self.palette_idx[np.argmax(prediction[:, h, w])]
+                
+                # Resize back to original size
+                parsing_im = cv2.resize(result, (img_width, img_height), 
+                                      interpolation=cv2.INTER_NEAREST)
+                
+                # Convert to grayscale class labels for compatibility
+                parsing_gray = np.zeros((img_height, img_width), dtype=np.uint8)
+                for class_id, color in enumerate(self.get_class_colors):
+                    mask = np.all(parsing_im == color, axis=2)
+                    parsing_gray[mask] = class_id
+                
+                batch_parsing.append(parsing_gray)
             
-            # Legs
-            # Left leg
-            left_leg_points = np.array([left_hip, left_knee, left_ankle])
-            for i in range(len(left_leg_points) - 1):
-                cv2.line(parsing_mask, tuple(left_leg_points[i]), tuple(left_leg_points[i+1]), 16, 20)
-            
-            # Right leg
-            right_leg_points = np.array([right_hip, right_knee, right_ankle])
-            for i in range(len(right_leg_points) - 1):
-                cv2.line(parsing_mask, tuple(right_leg_points[i]), tuple(right_leg_points[i+1]), 17, 20)
-            
-            # Pants region (lower torso)
-            pants_points = np.array([left_hip, right_hip, 
-                                   (right_knee[0], right_knee[1] - 20), 
-                                   (left_knee[0], left_knee[1] - 20)])
-            cv2.fillPoly(parsing_mask, [pants_points], 9)  # pants
-            
-            # Shoes
-            cv2.circle(parsing_mask, left_ankle, 15, 18, -1)  # left_shoe
-            cv2.circle(parsing_mask, right_ankle, 15, 19, -1)  # right_shoe
-            
-            # Only keep regions where person is detected
-            parsing_mask = parsing_mask * person_mask
+            return batch_parsing
             
         except Exception as e:
-            logger.error(f"Error creating pose regions: {e}")
-            return self._get_rule_based_parsing(None, person_mask)
-        
-        return parsing_mask
-    
-    def _get_rule_based_parsing(self, crop, person_mask):
-        """Create parsing using simple geometric rules"""
-        h, w = person_mask.shape
-        parsing_mask = np.zeros((h, w), dtype=np.uint8)
-        
-        # Find person bounding box
-        coords = np.where(person_mask > 0)
-        if len(coords[0]) == 0:
-            return parsing_mask
-        
-        min_y, max_y = coords[0].min(), coords[0].max()
-        min_x, max_x = coords[1].min(), coords[1].max()
-        
-        person_height = max_y - min_y
-        person_width = max_x - min_x
-        
-        # Simple region assignment
-        # Head (top 15%)
-        head_bottom = min_y + int(0.15 * person_height)
-        parsing_mask[min_y:head_bottom, min_x:max_x] = 13  # face
-        
-        # Hair (top 10%)  
-        hair_bottom = min_y + int(0.10 * person_height)
-        parsing_mask[min_y:hair_bottom, min_x:max_x] = 2  # hair
-        
-        # Torso (15% to 60%)
-        torso_top = min_y + int(0.15 * person_height)
-        torso_bottom = min_y + int(0.60 * person_height)
-        parsing_mask[torso_top:torso_bottom, min_x:max_x] = 5  # upperclothes
-        
-        # Pants (60% to 85%)
-        pants_top = min_y + int(0.60 * person_height)
-        pants_bottom = min_y + int(0.85 * person_height)
-        parsing_mask[pants_top:pants_bottom, min_x:max_x] = 9  # pants
-        
-        # Arms (sides)
-        arm_width = int(0.15 * person_width)
-        # Left arm
-        parsing_mask[torso_top:pants_top, min_x:min_x+arm_width] = 14
-        # Right arm  
-        parsing_mask[torso_top:pants_top, max_x-arm_width:max_x] = 15
-        
-        # Legs (bottom 40%)
-        leg_top = min_y + int(0.60 * person_height)
-        leg_mid = min_x + person_width // 2
-        # Left leg
-        parsing_mask[leg_top:max_y, min_x:leg_mid] = 16
-        # Right leg
-        parsing_mask[leg_top:max_y, leg_mid:max_x] = 17
-        
-        # Shoes (bottom 10%)
-        shoe_top = min_y + int(0.90 * person_height)
-        parsing_mask[shoe_top:max_y, min_x:leg_mid] = 18  # left_shoe
-        parsing_mask[shoe_top:max_y, leg_mid:max_x] = 19  # right_shoe
-        
-        # Only keep regions where person is detected
-        parsing_mask = parsing_mask * person_mask
-        
-        return parsing_mask
-    
-    def _create_simple_parsing(self, h, w):
-        """Create a simple fallback parsing"""
-        parsing_mask = np.zeros((h, w), dtype=np.uint8)
-        
-        # Simple geometric parsing
-        # Head
-        parsing_mask[:h//6, :] = 13  # face
-        parsing_mask[:h//8, :] = 2   # hair
-        
-        # Torso
-        parsing_mask[h//6:h//2, :] = 5  # upperclothes
-        
-        # Lower body
-        parsing_mask[h//2:4*h//5, :] = 9  # pants
-        
-        # Legs
-        parsing_mask[h//2:, :w//2] = 16   # left_leg
-        parsing_mask[h//2:, w//2:] = 17   # right_leg
-        
-        # Arms
-        parsing_mask[h//6:h//2, :w//4] = 14     # left_arm
-        parsing_mask[h//6:h//2, 3*w//4:] = 15   # right_arm
-        
-        # Shoes
-        parsing_mask[4*h//5:, :w//2] = 18    # left_shoe
-        parsing_mask[4*h//5:, w//2:] = 19    # right_shoe
-        
-        return parsing_mask
-    
-    def get_part_mask(self, parsing_mask: np.ndarray, part_labels: List[int]) -> np.ndarray:
-        """Get binary mask for specific body parts"""
-        mask = np.zeros_like(parsing_mask, dtype=np.uint8)
-        for label in part_labels:
-            mask[parsing_mask == label] = 255
-        return mask
-    
-    def get_body_parts(self, parsing_mask: np.ndarray) -> Dict[str, np.ndarray]:
-        """Extract masks for different body parts"""
-        parts = {}
-        
-        # Head (hat, hair, face)
-        parts['head'] = self.get_part_mask(parsing_mask, [1, 2, 13])
-        
-        # Torso (upperclothes, dress, coat)
-        parts['torso'] = self.get_part_mask(parsing_mask, [5, 6, 7])
-        
-        # Arms
-        parts['arms'] = self.get_part_mask(parsing_mask, [14, 15])
-        
-        # Legs
-        parts['legs'] = self.get_part_mask(parsing_mask, [16, 17])
-        
-        # Feet (shoes)
-        parts['feet'] = self.get_part_mask(parsing_mask, [18, 19])
-        
-        # Lower body (pants, skirt)
-        parts['lower_body'] = self.get_part_mask(parsing_mask, [9, 12])
-        
-        return parts
-    
-    def is_model_loaded(self) -> bool:
-        """Check if real model weights are loaded"""
-        return self.model_loaded
-    
-    def visualize_parsing(self, parsing_mask: np.ndarray) -> np.ndarray:
-        """Create colored visualization of parsing mask"""
-        # Define colors for each class
-        colors = [
-            [0, 0, 0],      # background
-            [128, 0, 0],    # hat
-            [255, 0, 0],    # hair
-            [0, 85, 0],     # glove
-            [170, 0, 51],   # sunglasses
-            [255, 85, 0],   # upperclothes
-            [0, 0, 85],     # dress
-            [0, 119, 221],  # coat
-            [85, 85, 0],    # socks
-            [0, 85, 85],    # pants
-            [85, 51, 0],    # jumpsuits
-            [52, 86, 128],  # scarf
-            [0, 128, 0],    # skirt
-            [0, 0, 255],    # face
-            [51, 170, 221], # left_arm
-            [0, 255, 255],  # right_arm
-            [85, 255, 170], # left_leg
-            [170, 255, 85], # right_leg
-            [255, 255, 0],  # left_shoe
-            [255, 170, 0]   # right_shoe
-        ]
-        
-        colored_mask = np.zeros((parsing_mask.shape[0], parsing_mask.shape[1], 3), dtype=np.uint8)
-        
-        for i, color in enumerate(colors):
-            if i < len(colors):
-                colored_mask[parsing_mask == i] = color
-        
-        return colored_mask
+            print(f"❌ Parsing extraction failed: {e}")
+            # Return empty parsing masks as fallback
+            return [np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8) for img in input_images]
 
+    def get_class_names_list(self):
+        """Get list of class names"""
+        return self.get_class_names.copy()
 
-def create_human_parsing_model(model_path: Optional[str] = None, device: str = "cpu", num_classes: int = 20) -> HumanParsingModel:
-    """
-    Create and return a human parsing model
-    
-    Args:
-        model_path: Path to SCHP model weights
-        device: Device to use for inference
-        num_classes: Number of parsing classes
-        
-    Returns:
-        HumanParsingModel instance
-    """
-    # Look for default model path in weights directory
-    if model_path is None:
-        current_dir = Path(__file__).parent.parent.parent
-        potential_paths = [
-            current_dir / "weights" / "schp_resnet101.pth",
-            current_dir / "weights" / "exp-schp-201908301523-atr.pth",
-            current_dir / "weights" / "schp.pth"
-        ]
-        
-        for path in potential_paths:
-            if path.exists():
-                model_path = str(path)
-                break
-    
-    return HumanParsingModel(model_path=model_path, device=device, num_classes=num_classes)
-
+    def get_num_classes(self):
+        """Get number of classes"""
+        return self.num_classes
 
 if __name__ == "__main__":
-    # Test the human parsing model
-    print("🧪 Testing SCHP Human Parsing Model")
-    
-    # Create test data
-    test_crop = np.random.randint(0, 255, (128, 64, 3), dtype=np.uint8)
-    
-    # Create parsing model
-    parsing_model = create_human_parsing_model(device="cpu")
-    
-    # Extract parsing
-    parsing_masks = parsing_model.extract_parsing([test_crop])
-    
-    print(f"✅ Extracted parsing: shape {parsing_masks[0].shape}")
-    print(f"📊 Model loaded: {parsing_model.is_model_loaded()}")
-    print(f"🎯 Unique values in parsing: {np.unique(parsing_masks[0])}")
-    print(f"🏷️  Labels: {list(parsing_model.LABELS.values())}")
-    
-    # Test body parts extraction
-    body_parts = parsing_model.get_body_parts(parsing_masks[0])
-    print(f"🔍 Body parts extracted: {list(body_parts.keys())}")
+    # Simple test
+    parser = HumanParsingModel()
+    print(f"Model loaded: {parser.is_model_loaded()}")
+    print(f"Number of classes: {parser.get_num_classes()}")
+    print(f"Class names: {parser.get_class_names()}")

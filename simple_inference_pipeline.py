@@ -332,6 +332,41 @@ class SimpleInferencePipeline:
                 "persons": list(self.gallery.keys())
             }
         return stats
+    
+    def process_gait_features(self, tracks_features: Dict[int, np.ndarray]) -> Dict[int, Dict]:
+        """
+        Process tracks using pre-extracted XGait features
+        
+        Args:
+            tracks_features: Dictionary mapping track_id -> feature_vector
+            
+        Returns:
+            Dictionary with identification results for each track
+        """
+        results = {}
+        
+        for track_id, feature_vector in tracks_features.items():
+            try:
+                # Directly use the provided XGait features for identification
+                identified_person, confidence = self._identify_person(feature_vector)
+                
+                results[track_id] = {
+                    "identified_person": identified_person,
+                    "confidence": confidence,
+                    "feature_vector": feature_vector,
+                    "method": "xgait_features"
+                }
+                
+            except Exception as e:
+                print(f"⚠️  Error processing XGait features for track {track_id}: {e}")
+                results[track_id] = {
+                    "identified_person": None,
+                    "confidence": 0.0,
+                    "error": str(e),
+                    "method": "xgait_features"
+                }
+        
+        return results
 
 
 def create_simple_inference_pipeline(device: str = "cpu", 

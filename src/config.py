@@ -2,7 +2,7 @@
 Configuration settings for the Person Tracking System
 """
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 import torch
 
@@ -48,8 +48,12 @@ class ModelConfig:
     yolo_model_path: str = "weights/yolo11m.pt"
     transreid_model_path: str = "weights/transreid_vitbase.pth"
     xgait_model_path: str = "weights/Gait3D-XGait-120000.pt"
-    parsing_model_path: str = "weights/schp_resnet101.pth"
+    parsing_model_path: str = "weights/parsing_u2net.pth"
+    silhoutte_model_path: str = "weights/u2net_fixed.pth"
     device: str = get_device()
+    
+    # Model-specific device overrides for compatibility
+    xgait_device: str = "cpu"  # Force XGait to use CPU due to MPS compatibility issues
     
     def __post_init__(self):
         """Initialize device-specific settings"""
@@ -58,6 +62,21 @@ class ModelConfig:
         self.use_autocast = self.device_config["autocast"]
         self.use_compile = self.device_config["compile"]
         self.memory_format = self.device_config["memory_format"]
+        
+        # XGait-specific configuration for CPU fallback
+        self.xgait_config = get_device_config(self.xgait_device)
+    
+    def get_model_device(self, model_name: str) -> str:
+        """Get the appropriate device for a specific model"""
+        if model_name.lower() == "xgait":
+            return self.xgait_device
+        return self.device
+    
+    def get_model_config(self, model_name: str) -> Dict[str, Any]:
+        """Get the appropriate device configuration for a specific model"""
+        if model_name.lower() == "xgait":
+            return self.xgait_config
+        return self.device_config
 
 @dataclass
 class TrackerConfig:
@@ -90,9 +109,9 @@ class VideoConfig:
 @dataclass
 class SystemConfig:
     """Main system configuration"""
-    model: ModelConfig = ModelConfig()
-    tracker: TrackerConfig = TrackerConfig()
-    video: VideoConfig = VideoConfig()
+    model: ModelConfig = field(default_factory=ModelConfig)
+    tracker: TrackerConfig = field(default_factory=TrackerConfig)
+    video: VideoConfig = field(default_factory=VideoConfig)
     
     # System settings
     verbose: bool = True
