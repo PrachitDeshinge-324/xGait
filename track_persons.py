@@ -39,7 +39,8 @@ from src.trackers.person_tracker import PersonTracker
 from src.utils.visualization import TrackingVisualizer
 from src.models.silhouette_model import SilhouetteExtractor
 from src.models.parsing_model import HumanParsingModel
-from src.models.xgait_model import XGaitInference
+from src.models.xgait_model import create_xgait_inference
+from src.models.xgait_adapter import XGaitAdapter
 from src.gallery.gallery_manager import GalleryManager
 
 # Import the simple inference pipeline
@@ -68,7 +69,7 @@ class PersonTrackingApp:
         if self.enable_gait_parsing:
             self.silhouette_extractor = SilhouetteExtractor(device=config.model.device)
             self.parsing_model = HumanParsingModel(model_path='weights/parsing_u2net.pth', device=config.model.device)
-            self.xgait_model = XGaitInference(model_path='weights/Gait3D-XGait-120000.pt', device=config.model.get_model_device("xgait"))
+            self.xgait_model = create_xgait_inference(model_path='weights/Gait3D-XGait-120000.pt', device=config.model.get_model_device("xgait"))
             
             # Create debug output directory
             self.debug_output_dir = Path("debug_gait_parsing")
@@ -96,11 +97,11 @@ class PersonTrackingApp:
         # Initialize identification using the real XGait model (if gait parsing is enabled)
         if self.enable_identification:
             # Initialize Gallery Manager for persistent storage and advanced features
-            # Using higher thresholds for XGait features which are naturally very similar
+            # Using realistic thresholds for XGait features - they vary with sequence length and viewing conditions
             self.gallery_manager = GalleryManager(
                 gallery_dir="gallery_data",
-                similarity_threshold=0.9995,  # Very high threshold for XGait features
-                auto_add_threshold=0.999,     # Add new person if similarity < 0.999
+                similarity_threshold=0.7,     # Realistic threshold for XGait features
+                auto_add_threshold=0.5,       # Add new person if similarity < 0.5
                 max_features_per_person=20,
                 pca_components=2
             )
@@ -171,6 +172,10 @@ class PersonTrackingApp:
         if 'cuda_version' in device_info:
             print(f"   • CUDA version: {device_info['cuda_version']}")
         print()
+        
+        # Check XGait utilization for optimization recommendations
+        if self.enable_gait_parsing and self.xgait_model:
+            self.check_xgait_utilization()
     
     def __del__(self):
         """Destructor to ensure proper cleanup"""
@@ -469,14 +474,14 @@ class PersonTrackingApp:
             
         try:
             # Use real XGait features for identification when available
-            if self.enable_gait_parsing and isinstance(self.identification_pipeline, XGaitInference):
+            if self.enable_gait_parsing and isinstance(self.identification_pipeline, XGaitAdapter):
                 # Direct XGait feature-based identification
                 for track_id, features in self.track_gait_features.items():
                     if len(features) >= 1:  # Use latest XGait features
                         latest_feature = features[-1]  # Most recent feature
                         
                         # Use real XGait model with gallery manager for identification
-                        identified_person, confidence = self.identification_pipeline.identify_person(latest_feature, track_id=track_id)
+                        identified_person, confidence, metadata = self.identification_pipeline.identify_person(latest_feature, track_id=track_id)
                         
                         if identified_person and confidence > 0.5:  # Only accept high confidence results
                             self.identification_results[track_id] = identified_person
@@ -754,7 +759,7 @@ class PersonTrackingApp:
         
         try:
             # Use real XGait features if available, otherwise fallback to crop-based approach
-            if self.enable_gait_parsing and isinstance(self.identification_pipeline, XGaitInference):
+            if self.enable_gait_parsing and isinstance(self.identification_pipeline, XGaitAdapter):
                 # Use real XGait features if available
                 if track_id in self.track_gait_features and len(self.track_gait_features[track_id]) > 0:
                     latest_feature = self.track_gait_features[track_id][-1]  # Use most recent XGait features
@@ -790,7 +795,7 @@ class PersonTrackingApp:
             return {}
         
         # Handle both real XGait model and simple pipeline
-        if isinstance(self.identification_pipeline, XGaitInference):
+        if isinstance(self.identification_pipeline, XGaitAdapter):
             gallery_stats = self.identification_pipeline.get_gallery_summary()
         else:
             gallery_stats = self.identification_pipeline.get_gallery_stats()
@@ -1097,7 +1102,6 @@ class PersonTrackingApp:
                 'last_extraction_frame': last_extraction,
                 'sequence_complete': silhouette_count >= self.sequence_buffer_size
             }
-        
         return sequence_info
     
     def get_xgait_statistics(self) -> Dict:
@@ -1243,3 +1247,67 @@ class PersonTrackingApp:
             return {'error': 'Gallery analysis not available'}
         
         return self.gallery_manager.analyze_separability()
+    
+    def check_xgait_utilization(self):
+        """Check and report how well XGait model is being utilized"""
+        if not self.enable_gait_parsing or not self.xgait_model:
+            print("❌ XGait model not available - GaitParsing disabled")
+            return
+        
+        # Get utilization report from XGait model
+        report = self.xgait_model.get_model_utilization_report()
+        
+        print("\n🎯 XGait Model Utilization Report:")
+        print("=" * 50)
+        
+        # Model status
+        status_icon = "✅" if report['model_loaded'] else "❌"
+        print(f"{status_icon} Model weights loaded: {report['model_loaded']}")
+        
+        # Input configuration
+        print(f"📐 Input size: {report['input_size_optimized']}")
+        print(f"⏱️  Sequence length: {report['target_sequence_length']} frames (min: {report['min_sequence_length']})")
+        
+        # Gallery status
+        gallery_icon = "✅" if report['gallery_active'] else "⚠️"
+        print(f"{gallery_icon} Gallery manager: {report['gallery_active']}")
+        
+        # Cross-granularity alignment capabilities
+        print("\n🔧 Cross-Granularity Alignment Capabilities:")
+        if 'performance_potential' in report and 'cross_granularity_alignment' in report['performance_potential']:
+            print(f"   • Architecture: {report['performance_potential']['cross_granularity_alignment']}")
+        else:
+            print("   • Status: Official XGait implementation active")
+        
+        # Performance potential
+        print(f"\n📈 Performance Potential:")
+        for metric, value in report['performance_potential'].items():
+            print(f"   • {metric}: {value}")
+        
+        # Recommendations
+        if report['recommendations']:
+            print(f"\n💡 Recommendations:")
+            for rec in report['recommendations']:
+                print(f"   {rec}")
+        
+        # Current utilization status
+        if hasattr(self, 'gallery_manager') and self.gallery_manager:
+            gallery_stats = self.gallery_manager.get_gallery_summary()
+            print(f"\n📚 Current Gallery Status:")
+            print(f"   • Registered persons: {gallery_stats.get('num_persons', 0)}")
+            print(f"   • Total features: {gallery_stats.get('total_features', 0)}")
+        
+        print("=" * 50)
+        
+        # Check if we're using dual input
+        dual_input_available = (self.silhouette_extractor and 
+                               self.parsing_model and 
+                               self.silhouette_extractor.is_model_loaded() and
+                               self.parsing_model.is_model_loaded())
+        
+        if dual_input_available:
+            print("🚀 DUAL INPUT READY: Silhouettes + Parsing for maximum XGait performance!")
+        else:
+            print("⚠️  SINGLE INPUT ONLY: Missing silhouette/parsing models - reduced XGait performance")
+        
+        return report

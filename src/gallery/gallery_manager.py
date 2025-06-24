@@ -295,6 +295,38 @@ class GalleryManager:
             # Normalize query features
             query_features = query_features / (np.linalg.norm(query_features) + 1e-8)
             
+            # FIRST: Check if this track ID is already associated with an existing person
+            if track_id is not None:
+                for person_id, metadata in self.gallery_metadata.items():
+                    if track_id in metadata.get('track_ids', []):
+                        # Track already assigned to this person - update features and return
+                        self.add_person(person_id, query_features, track_id)
+                        result_metadata = {
+                            'action': 'track_updated',
+                            'reason': 'existing_track_assignment'
+                        }
+                        self._record_identification(person_id, 1.0, track_id, result_metadata)
+                        return person_id, 1.0, result_metadata
+            
+            # SECOND: For new tracks, check if this track is already assigned to any person
+            # If not, and this is a new track, create a new person regardless of similarity
+            if track_id is not None:
+                track_already_assigned = False
+                for person_id, metadata in self.gallery_metadata.items():
+                    if track_id in metadata.get('track_ids', []):
+                        track_already_assigned = True
+                        break
+                
+                if not track_already_assigned:
+                    # This is a new track - create a new person for it
+                    new_person_id = self.add_person(None, query_features, track_id)
+                    result_metadata = {
+                        'action': 'auto_added_new_track',
+                        'reason': 'new_track_assignment'
+                    }
+                    self._record_identification(new_person_id, 1.0, track_id, result_metadata)
+                    return new_person_id, 1.0, result_metadata
+            
             if not self.gallery_features:
                 # Empty gallery - auto-add if enabled
                 if auto_add:

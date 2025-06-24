@@ -1,0 +1,6 @@
+{
+  "similarity_threshold": 0.7,
+  "auto_add_threshold": 0.5,
+  "max_features_per_person": 20,
+  "pca_components": 2
+}

@@ -5,14 +5,8 @@ Uses the official Gait3D-Benchmark implementation for maximum performance
 from pathlib import Path
 from typing import Optional
 import logging
-import sys
 
-# Add parent directory for imports when running directly
-if __name__ == "__main__":
-    sys.path.append(str(Path(__file__).parent.parent.parent))
-    from src.models.xgait_adapter import XGaitAdapter
-else:
-    from .xgait_adapter import XGaitAdapter
+from .xgait_adapter import XGaitAdapter
 
 logger = logging.getLogger(__name__)
 

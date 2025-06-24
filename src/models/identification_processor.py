@@ -1,6 +1,6 @@
 """
 Identification Processor
-Integrates silhouette extraction, human parsing, and XGait for person identification
+Integrates silhouette extraction, human parsing, and official XGait for person identification
 """
 import numpy as np
 import cv2
@@ -88,6 +88,7 @@ class IdentificationProcessor:
         
         # Person tracking data
         self.person_sequences = {}  # track_id -> list of silhouettes
+        self.person_parsing_sequences = {}  # track_id -> list of parsing masks
         self.person_features = {}   # track_id -> features
         
         logger.info(f"🎯 IdentificationProcessor initialized:")
@@ -140,21 +141,23 @@ class IdentificationProcessor:
         
         return parsing_masks
     
-    def extract_gait_features(self, silhouette_sequences: List[List[np.ndarray]]) -> np.ndarray:
-        """Extract XGait features from silhouette sequences"""
+    def extract_gait_features(self, silhouette_sequences: List[List[np.ndarray]], 
+                             parsing_sequences: List[List[np.ndarray]] = None) -> np.ndarray:
+        """Extract XGait features from silhouette sequences with optional parsing sequences for dual input"""
         if not silhouette_sequences:
-            return np.array([]).reshape(0, 256)
+            return np.array([]).reshape(0, 16384)  # Official XGait: 256 * 64 parts
         
         if self.xgait_available:
             try:
-                return self.xgait_model.extract_features(silhouette_sequences)
+                # Use dual input (silhouettes + parsing) for maximum XGait potential
+                return self.xgait_model.extract_features(silhouette_sequences, parsing_sequences)
             except Exception as e:
                 logger.error(f"Error in XGait feature extraction: {e}")
         
         # Fallback to dummy features
         features = []
         for _ in silhouette_sequences:
-            dummy_features = np.random.randn(256) * 0.1
+            dummy_features = np.random.randn(16384) * 0.1  # Match official dimension
             dummy_features = dummy_features / np.linalg.norm(dummy_features)
             features.append(dummy_features)
         
@@ -175,7 +178,7 @@ class IdentificationProcessor:
             return {
                 'silhouettes': [],
                 'parsing_masks': [],
-                'features': np.array([]).reshape(0, 256),
+                'features': np.array([]).reshape(0, 16384),  # Official XGait feature size
                 'track_ids': [],
                 'success': False
             }
@@ -188,36 +191,62 @@ class IdentificationProcessor:
         for i, track_id in enumerate(track_ids):
             if track_id not in self.person_sequences:
                 self.person_sequences[track_id] = []
+            if track_id not in self.person_parsing_sequences:
+                self.person_parsing_sequences[track_id] = []
             
             if i < len(silhouettes):
                 self.person_sequences[track_id].append(silhouettes[i])
                 
-                # Keep only recent frames (sliding window)
-                max_frames = 100
-                if len(self.person_sequences[track_id]) > max_frames:
-                    self.person_sequences[track_id] = self.person_sequences[track_id][-max_frames:]
+            if i < len(parsing_masks):
+                self.person_parsing_sequences[track_id].append(parsing_masks[i])
+                
+            # Keep only recent frames (sliding window)
+            max_frames = 100
+            if len(self.person_sequences[track_id]) > max_frames:
+                self.person_sequences[track_id] = self.person_sequences[track_id][-max_frames:]
+            if len(self.person_parsing_sequences[track_id]) > max_frames:
+                self.person_parsing_sequences[track_id] = self.person_parsing_sequences[track_id][-max_frames:]
         
         # Extract gait features for persons with enough frames
         sequences_for_feature_extraction = []
+        parsing_sequences_for_feature_extraction = []
         valid_track_ids = []
         
         for track_id in track_ids:
-            if track_id in self.person_sequences and len(self.person_sequences[track_id]) >= 10:
+            if (track_id in self.person_sequences and 
+                len(self.person_sequences[track_id]) >= 10):
                 # Use recent frames for feature extraction
                 recent_silhouettes = self.person_sequences[track_id][-30:]  # Last 30 frames
                 sequences_for_feature_extraction.append(recent_silhouettes)
+                
+                # Also get parsing sequences if available
+                if (track_id in self.person_parsing_sequences and 
+                    len(self.person_parsing_sequences[track_id]) >= 10):
+                    recent_parsing = self.person_parsing_sequences[track_id][-30:]  # Last 30 frames
+                    parsing_sequences_for_feature_extraction.append(recent_parsing)
+                else:
+                    # If no parsing available, append None to maintain alignment
+                    parsing_sequences_for_feature_extraction.append(None)
+                
                 valid_track_ids.append(track_id)
         
-        # Extract features
+        # Extract features using dual input (silhouettes + parsing) for full XGait potential
         if sequences_for_feature_extraction:
-            features = self.extract_gait_features(sequences_for_feature_extraction)
+            # Only pass parsing sequences if we have them for all tracks
+            if all(seq is not None for seq in parsing_sequences_for_feature_extraction):
+                logger.info(f"🎯 Using dual input (silhouettes + parsing) for {len(sequences_for_feature_extraction)} sequences")
+                features = self.extract_gait_features(sequences_for_feature_extraction, 
+                                                    parsing_sequences_for_feature_extraction)
+            else:
+                logger.info(f"⚠️ Using silhouettes only for {len(sequences_for_feature_extraction)} sequences (parsing unavailable)")
+                features = self.extract_gait_features(sequences_for_feature_extraction)
             
             # Update feature cache
             for i, track_id in enumerate(valid_track_ids):
                 if i < len(features):
                     self.person_features[track_id] = features[i]
         else:
-            features = np.array([]).reshape(0, 256)
+            features = np.array([]).reshape(0, 16384)  # Official XGait feature size
         
         return {
             'silhouettes': silhouettes,
@@ -276,6 +305,32 @@ class IdentificationProcessor:
         
         return False
     
+    def add_person_to_gallery(self, person_id: str, track_id: int) -> bool:
+        """
+        Add a person to the XGait gallery using their accumulated features
+        
+        Args:
+            person_id: Unique identifier for the person
+            track_id: Track ID of the person
+            
+        Returns:
+            True if successfully added, False otherwise
+        """
+        if track_id not in self.person_features:
+            logger.warning(f"No features available for track {track_id}")
+            return False
+        
+        if self.xgait_available:
+            try:
+                features = self.person_features[track_id]
+                self.xgait_model.add_to_gallery(person_id, features, track_id)
+                logger.info(f"✅ Added person '{person_id}' to XGait gallery (track: {track_id})")
+                return True
+            except Exception as e:
+                logger.error(f"Error adding person to gallery: {e}")
+        
+        return False
+    
     def get_person_summary(self, track_id: int) -> Dict[str, Any]:
         """Get summary information for a tracked person"""
         summary = {
@@ -321,6 +376,33 @@ class IdentificationProcessor:
         if self.xgait_available:
             self.xgait_model.clear_gallery()
     
+    def get_dual_input_statistics(self) -> Dict:
+        """Get statistics about dual input (silhouettes + parsing) usage"""
+        stats = {
+            'total_tracks': len(self.person_sequences),
+            'tracks_with_parsing': len(self.person_parsing_sequences),
+            'tracks_with_enough_silhouettes': 0,
+            'tracks_with_enough_parsing': 0,
+            'dual_input_ready_tracks': 0
+        }
+        
+        for track_id in self.person_sequences:
+            if len(self.person_sequences[track_id]) >= 10:
+                stats['tracks_with_enough_silhouettes'] += 1
+                
+            if (track_id in self.person_parsing_sequences and 
+                len(self.person_parsing_sequences[track_id]) >= 10):
+                stats['tracks_with_enough_parsing'] += 1
+                
+                if len(self.person_sequences[track_id]) >= 10:
+                    stats['dual_input_ready_tracks'] += 1
+        
+        stats['dual_input_utilization'] = (
+            stats['dual_input_ready_tracks'] / max(1, stats['tracks_with_enough_silhouettes'])
+        ) * 100
+        
+        return stats
+
     def get_model_status(self) -> Dict[str, bool]:
         """Get status of all models"""
         status = {

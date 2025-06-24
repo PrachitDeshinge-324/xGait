@@ -1,0 +1,68 @@
+================================================================================
+XGAIT GALLERY ANALYSIS REPORT
+================================================================================
+Generated: 2025-06-24 08:46:03
+
+📊 GALLERY OVERVIEW
+----------------------------------------
+Total Persons: 3
+Total Features: 60
+Average Features per Person: 20.0
+
+⚙️  CONFIGURATION
+----------------------------------------
+similarity_threshold: 0.7
+auto_add_threshold: 0.5
+max_features_per_person: 20
+
+👥 PERSON DETAILS
+----------------------------------------
+person_001:
+  Features: 20
+  Tracks: [1]
+  Quality Score: 1.000
+  Created: 2025-06-24T08:43:58.459980
+
+person_002:
+  Features: 20
+  Tracks: [2]
+  Quality Score: 1.000
+  Created: 2025-06-24T08:43:58.461102
+
+person_003:
+  Features: 20
+  Tracks: [3]
+  Quality Score: 1.000
+  Created: 2025-06-24T08:44:00.289107
+
+🔍 SEPARABILITY ANALYSIS
+----------------------------------------
+Separability Score: 0.035
+Overall Quality: Fair
+
+Intra-person Similarity (consistency within persons):
+  Mean: 0.972
+  Std:  0.002
+  Range: 0.969 - 0.975
+
+Inter-person Similarity (separation between persons):
+  Mean: 0.905
+  Std:  0.007
+  Range: 0.896 - 0.910
+
+💡 RECOMMENDATIONS
+----------------------------------------
+• Features may be too similar between persons - check feature extraction
+• Poor separability - consider different feature extraction or preprocessing
+
+📈 IDENTIFICATION STATISTICS
+----------------------------------------
+Total Identifications: 278
+Identification Rate: 0.0%
+Average Confidence: 0.000
+
+Action Breakdown:
+  track_updated: 275 (98.9%)
+  auto_added_new_track: 3 (1.1%)
+
+================================================================================
