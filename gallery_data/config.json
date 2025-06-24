@@ -1,7 +1,0 @@
-{
-  "similarity_threshold": 0.7,
-  "auto_add_threshold": 0.5,
-  "max_features_per_person": 20,
-  "n_clusters": 3,
-  "clustering_method": "kmeans"
-}

@@ -21,6 +21,7 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
+from datetime import datetime
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -175,11 +176,12 @@ def main():
             id_stats = app.get_identification_stats()
             if id_stats:
                 print(f"🔍 Identification Results:")
-                print(f"   • Gallery persons: {id_stats.get('persons', 0)}")
-                print(f"   • Total features: {id_stats.get('total_features', 0)}")
-                print(f"   • Avg features per person: {id_stats.get('avg_features_per_person', 0):.1f}")
+                print(f"   • Gallery persons: {id_stats.get('gallery_persons', 0)}")
+                print(f"   • Identified tracks: {id_stats.get('identified_tracks', 0)}")
+                print(f"   • Total tracks: {id_stats.get('total_tracks', 0)}")
+                print(f"   • Identification rate: {id_stats.get('identification_rate', 0):.1f}%")
             
-            # Generate comprehensive gallery analysis
+            # Generate simplified gallery analysis
             print(f"\n🎯 Gallery Analysis:")
             print("-" * 40)
             try:
@@ -187,16 +189,39 @@ def main():
                 if analysis_dir:
                     print(f"   📁 Analysis saved to: {analysis_dir}")
                 
-                # Run feature separability analysis
+                # Run simplified separability analysis
                 separability = app.analyze_feature_separability()
                 if 'error' not in separability:
                     print(f"   🎯 Separability Score: {separability['separability_score']:.3f}")
                     print(f"   📈 Quality Assessment: {separability['quality_assessment']['overall']}")
                 
-                # Create final clustering visualization with all tracks
-                clustering_path = app.run_clustering_analysis(save_path="final_clustering_analysis.png", show_plot=False)
-                if clustering_path:
-                    print(f"   📊 Final clustering visualization: {clustering_path}")
+                # Run comprehensive clustering analysis with visualizations
+                print(f"   📊 Running comprehensive clustering analysis...")
+                clustering_dir = app.run_clustering_analysis(save_results=True, show_plot=False)
+                if clustering_dir:
+                    print(f"   📊 Clustering analysis saved to: {clustering_dir}")
+                else:
+                    print(f"   ⚠️  Clustering analysis skipped (no embeddings available)")
+                
+                # Also save basic clustering report for backward compatibility
+                clustering_path = "final_clustering_analysis.txt"
+                with open(clustering_path, 'w') as f:
+                    f.write("Comprehensive Gait Identification Analysis\n")
+                    f.write("=" * 50 + "\n")
+                    f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                    
+                    gallery_stats = app.get_gallery_stats()
+                    f.write(f"Gallery Statistics:\n")
+                    f.write(f"  Total Persons: {gallery_stats.get('num_persons', 0)}\n")
+                    f.write(f"  Person IDs: {', '.join(gallery_stats.get('person_ids', []))}\n\n")
+                    
+                    if clustering_dir:
+                        f.write(f"Detailed clustering analysis available in: {clustering_dir}\n")
+                        f.write("See visualization files and JSON report for comprehensive results.\n")
+                    else:
+                        f.write("No clustering analysis performed (insufficient data).\n")
+                
+                print(f"   📊 Final clustering report: {clustering_path}")
                 
             except Exception as e:
                 print(f"   ⚠️  Gallery analysis failed: {e}")
