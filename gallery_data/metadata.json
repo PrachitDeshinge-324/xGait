@@ -1,26 +1,18 @@
 {
   "person_001": {
-    "created": "2025-06-24T08:43:58.459980",
+    "created": "2025-06-24T22:27:09.455495",
     "track_ids": [
       1
     ],
-    "feature_count": 20,
-    "last_updated": "2025-06-24T08:45:34.414895"
+    "feature_count": 16,
+    "last_updated": "2025-06-24T22:27:23.061223"
   },
   "person_002": {
-    "created": "2025-06-24T08:43:58.461102",
+    "created": "2025-06-24T22:27:09.458616",
     "track_ids": [
       2
     ],
-    "feature_count": 20,
-    "last_updated": "2025-06-24T08:45:34.416448"
-  },
-  "person_003": {
-    "created": "2025-06-24T08:44:00.289107",
-    "track_ids": [
-      3
-    ],
-    "feature_count": 20,
-    "last_updated": "2025-06-24T08:45:34.417661"
+    "feature_count": 16,
+    "last_updated": "2025-06-24T22:27:23.062699"
   }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Gallery Manager for Person Identification
-Comprehensive system for storing, managing, and analyzing XGait features with persistent storage and PCA visualization
+Comprehensive system for storing, managing, and analyzing XGait features with persistent storage and clustering-based visualization
 """
 
 import os
@@ -13,9 +13,16 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 from datetime import datetime
 import logging
-from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.manifold import TSNE
+from sklearn.cluster import KMeans, DBSCAN
+from sklearn.metrics import silhouette_score
+try:
+    import umap.umap_ as umap
+    UMAP_AVAILABLE = True
+except ImportError:
+    UMAP_AVAILABLE = False
 import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import defaultdict
@@ -32,7 +39,7 @@ class GalleryManager:
     - Persistent storage and loading of gallery data
     - Feature matching and identification with confidence scoring
     - Automatic gallery updates for unseen individuals
-    - PCA visualization and analysis of feature separability
+    - Clustering-based visualization and analysis of feature separability
     - Thread-safe operations for concurrent access
     - Quality metrics and statistics
     """
@@ -42,7 +49,8 @@ class GalleryManager:
                  similarity_threshold: float = 0.7,
                  auto_add_threshold: float = 0.5,
                  max_features_per_person: int = 20,
-                 pca_components: int = 2):
+                 n_clusters: int = 3,
+                 clustering_method: str = "kmeans"):
         """
         Initialize Gallery Manager
         
@@ -51,7 +59,8 @@ class GalleryManager:
             similarity_threshold: Minimum similarity for positive identification
             auto_add_threshold: Threshold below which new tracks are auto-added as new persons
             max_features_per_person: Maximum number of feature vectors stored per person
-            pca_components: Number of PCA components for visualization
+            n_clusters: Number of clusters for clustering visualization
+            clustering_method: Method for clustering ("kmeans", "dbscan", "tsne", "umap")
         """
         self.gallery_dir = Path(gallery_dir)
         self.gallery_dir.mkdir(exist_ok=True)
@@ -59,7 +68,8 @@ class GalleryManager:
         self.similarity_threshold = similarity_threshold
         self.auto_add_threshold = auto_add_threshold
         self.max_features_per_person = max_features_per_person
-        self.pca_components = pca_components
+        self.n_clusters = n_clusters
+        self.clustering_method = clustering_method
         
         # Gallery data structures
         self.gallery_features = {}  # person_id -> List[feature_vectors]
@@ -68,8 +78,22 @@ class GalleryManager:
         
         # Analysis components
         self.scaler = StandardScaler()
-        self.pca = PCA(n_components=pca_components)
-        self.pca_fitted = False
+        
+        # Clustering components based on method
+        if clustering_method == "kmeans":
+            self.clusterer = KMeans(n_clusters=n_clusters, random_state=42)
+        elif clustering_method == "dbscan":
+            self.clusterer = DBSCAN(eps=0.5, min_samples=2)
+        elif clustering_method == "tsne":
+            self.clusterer = TSNE(n_components=2, random_state=42, perplexity=min(30, max(5, n_clusters-1)))
+        elif clustering_method == "umap" and UMAP_AVAILABLE:
+            self.clusterer = umap.UMAP(n_components=2, random_state=42)
+        else:
+            # Fallback to kmeans
+            self.clusterer = KMeans(n_clusters=n_clusters, random_state=42)
+            self.clustering_method = "kmeans"
+            
+        self.clustering_fitted = False
         
         # Thread safety
         self.lock = threading.RLock()
@@ -122,7 +146,8 @@ class GalleryManager:
                     self.similarity_threshold = config_data.get('similarity_threshold', self.similarity_threshold)
                     self.auto_add_threshold = config_data.get('auto_add_threshold', self.auto_add_threshold)
                     self.max_features_per_person = config_data.get('max_features_per_person', self.max_features_per_person)
-                    self.pca_components = config_data.get('pca_components', self.pca_components)
+                    self.n_clusters = config_data.get('n_clusters', self.n_clusters)
+                    self.clustering_method = config_data.get('clustering_method', self.clustering_method)
                 logger.info(f"📋 Loaded configuration: similarity_threshold={self.similarity_threshold}, auto_add_threshold={self.auto_add_threshold}")
             
             # Update next person ID
@@ -177,7 +202,8 @@ class GalleryManager:
                     'similarity_threshold': self.similarity_threshold,
                     'auto_add_threshold': self.auto_add_threshold,
                     'max_features_per_person': self.max_features_per_person,
-                    'pca_components': self.pca_components
+                    'n_clusters': self.n_clusters,
+                    'clustering_method': self.clustering_method
                 }
                 with open(config_file, 'w') as f:
                     json.dump(config_data, f, indent=2)
@@ -265,8 +291,8 @@ class GalleryManager:
             # Update statistics
             self._update_person_statistics(person_id)
             
-            # Mark PCA as needing refit
-            self.pca_fitted = False
+            # Mark clustering as needing refit
+            self.clustering_fitted = False
             
             logger.info(f"👤 Added features for {person_id} (track {track_id}), "
                        f"total features: {len(self.gallery_features[person_id])}")
@@ -452,11 +478,11 @@ class GalleryManager:
         if len(self.identification_history) > 10000:
             self.identification_history = self.identification_history[-5000:]
     
-    def fit_pca_analysis(self) -> None:
-        """Fit PCA for feature analysis and visualization"""
+    def fit_clustering_analysis(self) -> None:
+        """Fit clustering for feature analysis and visualization"""
         with self.lock:
             if not self.gallery_features:
-                logger.warning("⚠️  Cannot fit PCA: gallery is empty")
+                logger.warning("⚠️  Cannot fit clustering: gallery is empty")
                 return
             
             # Collect all features
@@ -469,31 +495,59 @@ class GalleryManager:
                     person_labels.append(person_id)
             
             if len(all_features) < 2:
-                logger.warning("⚠️  Cannot fit PCA: need at least 2 feature vectors")
+                logger.warning("⚠️  Cannot fit clustering: need at least 2 feature vectors")
                 return
             
             # Convert to array
             feature_matrix = np.array(all_features)
             
-            # Fit scaler and PCA
+            # Fit scaler and clustering
             try:
                 feature_matrix_scaled = self.scaler.fit_transform(feature_matrix)
-                self.pca.fit(feature_matrix_scaled)
-                self.pca_fitted = True
                 
-                logger.info(f"✅ PCA fitted on {len(all_features)} features from {len(self.gallery_features)} persons")
-                logger.info(f"   Explained variance ratio: {self.pca.explained_variance_ratio_}")
+                if self.clustering_method in ["kmeans", "dbscan"]:
+                    # For kmeans and dbscan, we fit and predict
+                    if self.clustering_method == "kmeans":
+                        # Adjust n_clusters based on actual number of persons
+                        actual_clusters = min(self.n_clusters, len(set(person_labels)))
+                        self.clusterer = KMeans(n_clusters=actual_clusters, random_state=42)
+                    
+                    cluster_labels = self.clusterer.fit_predict(feature_matrix_scaled)
+                    
+                    # Calculate silhouette score for clustering quality
+                    if len(set(cluster_labels)) > 1:
+                        silhouette_avg = silhouette_score(feature_matrix_scaled, cluster_labels)
+                        logger.info(f"✅ Clustering fitted on {len(all_features)} features from {len(self.gallery_features)} persons")
+                        logger.info(f"   Silhouette score: {silhouette_avg:.3f}")
+                    else:
+                        logger.info(f"✅ Clustering fitted on {len(all_features)} features from {len(self.gallery_features)} persons")
+                        logger.info(f"   Single cluster detected")
+                
+                elif self.clustering_method in ["tsne", "umap"]:
+                    # For dimensionality reduction methods, we fit_transform
+                    if self.clustering_method == "tsne":
+                        # Adjust perplexity based on data size
+                        perplexity = min(30, max(5, len(all_features) // 3))
+                        self.clusterer = TSNE(n_components=2, random_state=42, perplexity=perplexity)
+                    elif self.clustering_method == "umap" and UMAP_AVAILABLE:
+                        # Adjust n_neighbors based on data size
+                        n_neighbors = min(15, max(2, len(all_features) // 3))
+                        self.clusterer = umap.UMAP(n_components=2, random_state=42, n_neighbors=n_neighbors)
+                    
+                    logger.info(f"✅ {self.clustering_method.upper()} fitted on {len(all_features)} features from {len(self.gallery_features)} persons")
+                
+                self.clustering_fitted = True
                 
             except Exception as e:
-                logger.error(f"❌ PCA fitting failed: {e}")
-                self.pca_fitted = False
+                logger.error(f"❌ Clustering fitting failed: {e}")
+                self.clustering_fitted = False
     
     def visualize_feature_space(self, 
                                save_path: Optional[str] = None,
                                show_plot: bool = True,
                                query_features: Optional[Dict[str, np.ndarray]] = None) -> Optional[str]:
         """
-        Create PCA visualization of the feature space
+        Create clustering visualization of the feature space
         
         Args:
             save_path: Path to save the plot
@@ -503,11 +557,11 @@ class GalleryManager:
         Returns:
             Path to saved plot if save_path provided
         """
-        if not self.pca_fitted:
-            self.fit_pca_analysis()
+        if not self.clustering_fitted:
+            self.fit_clustering_analysis()
         
-        if not self.pca_fitted:
-            logger.error("❌ Cannot create visualization: PCA not fitted")
+        if not self.clustering_fitted:
+            logger.error("❌ Cannot create visualization: clustering not fitted")
             return None
         
         # Collect gallery features
@@ -528,10 +582,37 @@ class GalleryManager:
         # Transform features
         feature_matrix = np.array(all_features)
         feature_matrix_scaled = self.scaler.transform(feature_matrix)
-        pca_features = self.pca.transform(feature_matrix_scaled)
+        
+        # Get 2D representation based on clustering method
+        if self.clustering_method in ["tsne", "umap"]:
+            # For dimensionality reduction methods, transform to 2D
+            if self.clustering_method == "tsne":
+                # For t-SNE, we need to refit since it doesn't support transform
+                perplexity = min(30, max(5, len(all_features) // 3))
+                tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity)
+                reduced_features = tsne.fit_transform(feature_matrix_scaled)
+            elif self.clustering_method == "umap" and UMAP_AVAILABLE:
+                # For UMAP, refit and transform
+                n_neighbors = min(15, max(2, len(all_features) // 3))
+                umap_reducer = umap.UMAP(n_components=2, random_state=42, n_neighbors=n_neighbors)
+                reduced_features = umap_reducer.fit_transform(feature_matrix_scaled)
+            else:
+                # Fallback to t-SNE if UMAP not available
+                tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, max(5, len(all_features) // 3)))
+                reduced_features = tsne.fit_transform(feature_matrix_scaled)
+                
+        else:
+            # For clustering methods, use t-SNE for 2D visualization
+            tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, max(5, len(all_features) // 3)))
+            reduced_features = tsne.fit_transform(feature_matrix_scaled)
+        
+        # Get cluster labels if using clustering methods
+        cluster_labels = None
+        if self.clustering_method in ["kmeans", "dbscan"]:
+            cluster_labels = self.clusterer.predict(feature_matrix_scaled) if hasattr(self.clusterer, 'predict') else self.clusterer.fit_predict(feature_matrix_scaled)
         
         # Create visualization
-        plt.figure(figsize=(12, 8))
+        plt.figure(figsize=(14, 10))
         
         # Get unique persons and assign colors
         unique_persons = list(set(person_labels))
@@ -541,23 +622,38 @@ class GalleryManager:
         # Plot gallery features
         for i, person_id in enumerate(unique_persons):
             person_mask = [label == person_id for label in person_labels]
-            person_pca = pca_features[person_mask]
+            person_features = reduced_features[person_mask]
             
-            plt.scatter(person_pca[:, 0], person_pca[:, 1], 
+            plt.scatter(person_features[:, 0], person_features[:, 1], 
                        c=[person_color_map[person_id]], 
                        label=f'{person_id} ({np.sum(person_mask)} features)',
                        alpha=0.7, s=60)
             
-            # Add convex hull or ellipse for each person
-            if len(person_pca) > 2:
+            # Add convex hull for each person if enough points
+            if len(person_features) > 2:
                 from scipy.spatial import ConvexHull
                 try:
-                    hull = ConvexHull(person_pca)
+                    hull = ConvexHull(person_features)
                     for simplex in hull.simplices:
-                        plt.plot(person_pca[simplex, 0], person_pca[simplex, 1], 
+                        plt.plot(person_features[simplex, 0], person_features[simplex, 1], 
                                 color=person_color_map[person_id], alpha=0.3, linewidth=1)
                 except:
                     pass  # Skip if convex hull fails
+        
+        # Plot cluster boundaries if using clustering
+        if cluster_labels is not None and len(set(cluster_labels)) > 1:
+            # Add cluster center markers
+            unique_clusters = set(cluster_labels)
+            for cluster_id in unique_clusters:
+                if cluster_id == -1:  # DBSCAN noise points
+                    continue
+                cluster_mask = cluster_labels == cluster_id
+                cluster_points = reduced_features[cluster_mask]
+                center = np.mean(cluster_points, axis=0)
+                plt.scatter(center[0], center[1], marker='X', s=200, c='black', 
+                           edgecolors='white', linewidth=2, alpha=0.8)
+                plt.annotate(f'C{cluster_id}', (center[0], center[1]), 
+                           xytext=(5, 5), textcoords='offset points', fontsize=10, fontweight='bold')
         
         # Plot query features if provided
         if query_features:
@@ -566,24 +662,55 @@ class GalleryManager:
                     features = features.flatten()
                 
                 features_scaled = self.scaler.transform(features.reshape(1, -1))
-                pca_query = self.pca.transform(features_scaled)
                 
-                plt.scatter(pca_query[0, 0], pca_query[0, 1], 
-                           marker='*', s=200, c='red', 
+                # Transform query features to 2D space
+                if self.clustering_method == "tsne":
+                    # For t-SNE, we need to include query in the original fit (approximation)
+                    combined_features = np.vstack([feature_matrix_scaled, features_scaled])
+                    tsne_combined = TSNE(n_components=2, random_state=42, perplexity=min(30, max(5, len(combined_features) // 3)))
+                    reduced_combined = tsne_combined.fit_transform(combined_features)
+                    query_2d = reduced_combined[-1:]  # Last point is the query
+                elif self.clustering_method == "umap" and UMAP_AVAILABLE:
+                    # For UMAP, we can transform new points
+                    umap_reducer = umap.UMAP(n_components=2, random_state=42, n_neighbors=min(15, max(2, len(all_features) // 3)))
+                    umap_reducer.fit(feature_matrix_scaled)
+                    query_2d = umap_reducer.transform(features_scaled)
+                else:
+                    # Approximation for other methods - use closest point
+                    distances = np.linalg.norm(feature_matrix_scaled - features_scaled, axis=1)
+                    closest_idx = np.argmin(distances)
+                    query_2d = reduced_features[closest_idx:closest_idx+1]
+                
+                plt.scatter(query_2d[0, 0], query_2d[0, 1], 
+                           marker='*', s=300, c='red', 
                            label=f'Query Track {track_id}', 
                            edgecolors='black', linewidth=2)
         
-        plt.xlabel(f'PC1 ({self.pca.explained_variance_ratio_[0]:.1%} variance)')
-        plt.ylabel(f'PC2 ({self.pca.explained_variance_ratio_[1]:.1%} variance)')
-        plt.title('XGait Feature Space Visualization (PCA)\nFeature Separability Analysis')
+        # Set labels and title based on clustering method
+        method_name = self.clustering_method.upper()
+        if self.clustering_method in ["tsne", "umap"]:
+            plt.xlabel(f'{method_name} Component 1')
+            plt.ylabel(f'{method_name} Component 2')
+            plt.title(f'XGait Feature Space Visualization ({method_name})\nDimensionality Reduction Analysis')
+        else:
+            plt.xlabel('t-SNE Component 1')
+            plt.ylabel('t-SNE Component 2')
+            plt.title(f'XGait Feature Space Visualization (t-SNE + {method_name} Clustering)\nClustering Analysis')
+        
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.grid(True, alpha=0.3)
         
         # Add statistics text
-        total_variance = np.sum(self.pca.explained_variance_ratio_)
-        stats_text = f'Total Variance Explained: {total_variance:.1%}\n'
+        stats_text = f'Method: {method_name}\n'
         stats_text += f'Gallery Persons: {len(unique_persons)}\n'
         stats_text += f'Total Features: {len(all_features)}'
+        
+        if cluster_labels is not None:
+            n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
+            stats_text += f'\nClusters Found: {n_clusters}'
+            if n_clusters > 1:
+                silhouette_avg = silhouette_score(feature_matrix_scaled, cluster_labels)
+                stats_text += f'\nSilhouette Score: {silhouette_avg:.3f}'
         
         plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes, 
                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
@@ -595,7 +722,7 @@ class GalleryManager:
         if save_path:
             saved_path = save_path
             plt.savefig(saved_path, dpi=300, bbox_inches='tight')
-            logger.info(f"💾 PCA visualization saved to {saved_path}")
+            logger.info(f"💾 {method_name} visualization saved to {saved_path}")
         
         if show_plot:
             plt.show()
@@ -910,7 +1037,7 @@ if __name__ == "__main__":
     print(f"🎯 Separability score: {separability['separability_score']:.3f}")
     
     # Test visualization
-    gallery.visualize_feature_space(save_path="test_pca.png", show_plot=False)
+    gallery.visualize_feature_space(save_path="test_clustering.png", show_plot=False)
     
     # Generate report
     report = gallery.create_detailed_report("test_report.txt")

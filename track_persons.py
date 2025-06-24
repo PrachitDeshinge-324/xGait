@@ -103,7 +103,8 @@ class PersonTrackingApp:
                 similarity_threshold=0.7,     # Realistic threshold for XGait features
                 auto_add_threshold=0.5,       # Add new person if similarity < 0.5
                 max_features_per_person=20,
-                pca_components=2
+                n_clusters=3,                 # Number of clusters for visualization
+                clustering_method="kmeans"    # Clustering method for embedding visualization
             )
             
             if self.enable_gait_parsing and self.xgait_model:
@@ -1154,8 +1155,8 @@ class PersonTrackingApp:
             report = self.gallery_manager.create_detailed_report(str(report_path))
             print(f"📄 Gallery report saved to {report_path}")
             
-            # Create PCA visualization
-            pca_path = analysis_dir / f"pca_visualization_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            # Create clustering visualization
+            clustering_path = analysis_dir / f"clustering_visualization_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
             
             # Include current tracks as query points if available
             query_features = {}
@@ -1165,13 +1166,13 @@ class PersonTrackingApp:
                         query_features[track_id] = features_list[-1]  # Latest features
             
             saved_path = self.gallery_manager.visualize_feature_space(
-                save_path=str(pca_path),
+                save_path=str(clustering_path),
                 show_plot=False,
                 query_features=query_features
             )
             
             if saved_path:
-                print(f"📊 PCA visualization saved to {saved_path}")
+                print(f"📊 Clustering visualization saved to {saved_path}")
             
             # Get separability analysis
             separability = self.gallery_manager.analyze_separability()
@@ -1208,9 +1209,9 @@ class PersonTrackingApp:
         
         return self.gallery_manager.get_gallery_summary()
     
-    def run_pca_analysis(self, save_path: Optional[str] = None, show_plot: bool = False) -> Optional[str]:
+    def run_clustering_analysis(self, save_path: Optional[str] = None, show_plot: bool = False) -> Optional[str]:
         """
-        Run PCA analysis on current gallery features
+        Run clustering analysis on current gallery features
         
         Args:
             save_path: Optional path to save the visualization
@@ -1220,7 +1221,7 @@ class PersonTrackingApp:
             Path to saved visualization if save_path provided
         """
         if not self.enable_identification or not self.gallery_manager:
-            print("⚠️  PCA analysis not available - identification disabled")
+            print("⚠️  Clustering analysis not available - identification disabled")
             return None
         
         try:
@@ -1238,7 +1239,7 @@ class PersonTrackingApp:
             )
             
         except Exception as e:
-            print(f"❌ Error during PCA analysis: {e}")
+            print(f"❌ Error during clustering analysis: {e}")
             return None
     
     def analyze_feature_separability(self) -> Dict:
@@ -1311,3 +1312,10 @@ class PersonTrackingApp:
             print("⚠️  SINGLE INPUT ONLY: Missing silhouette/parsing models - reduced XGait performance")
         
         return report
+
+    # Backward compatibility alias
+    def run_pca_analysis(self, save_path: Optional[str] = None, show_plot: bool = False) -> Optional[str]:
+        """
+        Backward compatibility alias for run_clustering_analysis
+        """
+        return self.run_clustering_analysis(save_path=save_path, show_plot=show_plot)

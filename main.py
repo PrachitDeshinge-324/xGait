@@ -193,10 +193,10 @@ def main():
                     print(f"   🎯 Separability Score: {separability['separability_score']:.3f}")
                     print(f"   📈 Quality Assessment: {separability['quality_assessment']['overall']}")
                 
-                # Create final PCA visualization with all tracks
-                pca_path = app.run_pca_analysis(save_path="final_pca_analysis.png", show_plot=False)
-                if pca_path:
-                    print(f"   📊 Final PCA visualization: {pca_path}")
+                # Create final clustering visualization with all tracks
+                clustering_path = app.run_clustering_analysis(save_path="final_clustering_analysis.png", show_plot=False)
+                if clustering_path:
+                    print(f"   📊 Final clustering visualization: {clustering_path}")
                 
             except Exception as e:
                 print(f"   ⚠️  Gallery analysis failed: {e}")

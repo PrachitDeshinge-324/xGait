@@ -1,6 +1,6 @@
 [
   {
-    "timestamp": "2025-06-24T08:43:58.460926",
+    "timestamp": "2025-06-24T22:27:09.458393",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -10,7 +10,7 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:43:58.461580",
+    "timestamp": "2025-06-24T22:27:09.462430",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
@@ -20,7 +20,7 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:44:00.288372",
+    "timestamp": "2025-06-24T22:27:10.381574",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -30,7 +30,7 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:44:00.289077",
+    "timestamp": "2025-06-24T22:27:10.382190",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
@@ -40,2327 +40,7 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:44:00.289440",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "auto_added_new_track",
-      "reason": "new_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:01.332913",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:01.333395",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:01.333864",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:02.565657",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:02.566545",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:02.567140",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:03.400170",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:03.402887",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:03.407544",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:05.411262",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:05.411929",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:05.413042",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:06.474757",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:06.475527",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:06.476277",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:07.410631",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:07.411370",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:07.412018",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:07.818195",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:07.819203",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:07.819953",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:09.416435",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:09.417363",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:09.418302",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:09.895937",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:09.896772",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:09.897738",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:11.410574",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:11.411622",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:11.412501",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:12.057559",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:12.058654",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:12.059543",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:13.199618",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:13.201126",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:13.202325",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:13.640065",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:13.641372",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:13.642310",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:14.880589",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:14.881618",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:14.882638",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:15.292786",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:15.293776",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:15.294707",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:16.390571",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:16.391707",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:16.392737",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:17.009462",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:17.010522",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:17.011430",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:18.128355",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:18.129696",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:18.131094",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:18.828518",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:18.830803",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:18.831910",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:20.072895",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:20.074102",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:20.075512",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:20.666035",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:20.667267",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:20.668447",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:22.116123",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:22.117502",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:22.118826",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:22.528279",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:22.529386",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:22.530518",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:23.836094",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:23.837575",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:23.839002",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:24.959395",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:24.960881",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:24.961943",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:26.191769",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:26.193337",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:26.194888",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:26.614670",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:26.615699",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:26.616776",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:27.769025",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:27.770382",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:27.772373",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:28.766618",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:28.768975",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:28.770875",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:30.488193",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:30.489894",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:30.491486",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:31.014070",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:31.015095",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:31.016096",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:32.823897",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:32.825557",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:32.827171",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:33.267316",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:33.268938",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:33.270302",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:34.398207",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:34.400323",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:34.401653",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:35.122908",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:35.125820",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:35.127608",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:37.335285",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:37.336865",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:37.338199",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:38.287610",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:38.291766",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:38.298899",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:39.616939",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:39.618105",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:39.619452",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:40.063808",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:40.065427",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:40.066501",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:41.968719",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:41.970206",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:41.971498",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:42.702369",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:42.703816",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:42.705091",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:44.045869",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:44.047332",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:44.048955",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:44.696694",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:44.697860",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:44.699096",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:45.940927",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:45.942114",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:45.943343",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:46.593775",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:46.595121",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:46.596142",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:48.111681",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:48.113263",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:48.115290",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:48.577393",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:48.578750",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:48.579901",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:49.956440",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:49.957734",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:49.958988",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:50.889598",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:50.891196",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:50.892795",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:52.086943",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:52.088223",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:52.089739",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:52.587148",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:52.588458",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:52.589812",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:54.410323",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:54.411818",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:54.413316",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:54.958440",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:54.960026",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:54.961347",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:56.349353",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:56.350628",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:56.352113",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:57.072782",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:57.073881",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:57.075008",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:58.256698",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:58.259244",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:58.260905",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:59.151014",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:59.161444",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:44:59.171535",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:00.583406",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:00.585413",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:00.587685",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:01.035475",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:01.036714",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:01.038031",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:02.219059",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:02.220245",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:02.221496",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:03.053662",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:03.055173",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:03.057000",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:04.508223",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:04.510085",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:04.511935",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:04.950713",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:04.952103",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:04.953356",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:06.496788",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:06.500648",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:06.504403",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:06.978494",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:06.979784",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:06.980922",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:08.187455",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:08.189736",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:08.191356",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:09.189375",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:09.190920",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:09.192404",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:10.626185",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:10.627535",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:10.629030",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:11.231129",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:11.232300",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:11.233407",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:12.690539",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:12.692682",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:12.695452",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:13.151853",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:13.153016",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:13.154097",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:14.515960",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:14.517245",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:14.518496",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:15.561672",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:15.563626",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:15.565401",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:16.766817",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:16.768020",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:16.769295",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:17.222002",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:17.223305",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:17.224574",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:18.635750",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:18.637021",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:18.638300",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:19.100406",
-    "person_id": "person_001",
-    "confidence": 1.0,
-    "track_id": 1,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:19.101650",
-    "person_id": "person_002",
-    "confidence": 1.0,
-    "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:19.102734",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:20.480930",
+    "timestamp": "2025-06-24T22:27:11.675455",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2370,27 +50,17 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:20.482630",
+    "timestamp": "2025-06-24T22:27:11.676213",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:20.484659",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:21.562432",
+    "timestamp": "2025-06-24T22:27:12.145991",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2400,27 +70,17 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:21.563694",
+    "timestamp": "2025-06-24T22:27:12.146608",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:21.564880",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:23.576105",
+    "timestamp": "2025-06-24T22:27:13.812373",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2430,27 +90,17 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:23.577448",
+    "timestamp": "2025-06-24T22:27:13.812930",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:23.578502",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:24.435285",
+    "timestamp": "2025-06-24T22:27:14.550320",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2460,27 +110,17 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:24.436527",
+    "timestamp": "2025-06-24T22:27:14.550927",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:24.437571",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:25.793164",
+    "timestamp": "2025-06-24T22:27:15.273827",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2490,27 +130,17 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:25.794607",
+    "timestamp": "2025-06-24T22:27:15.274467",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:25.796039",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:26.236313",
+    "timestamp": "2025-06-24T22:27:15.913997",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2520,27 +150,17 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:26.237763",
+    "timestamp": "2025-06-24T22:27:15.914935",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:26.238953",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:27.623968",
+    "timestamp": "2025-06-24T22:27:17.546366",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2550,27 +170,17 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:27.625520",
+    "timestamp": "2025-06-24T22:27:17.547342",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:27.626967",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:28.086124",
+    "timestamp": "2025-06-24T22:27:18.304066",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2580,7 +190,7 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:28.087383",
+    "timestamp": "2025-06-24T22:27:18.305310",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
@@ -2590,17 +200,7 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:28.088475",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:29.305352",
+    "timestamp": "2025-06-24T22:27:19.082764",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2610,27 +210,17 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:29.306752",
+    "timestamp": "2025-06-24T22:27:19.083536",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:29.308106",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:29.974595",
+    "timestamp": "2025-06-24T22:27:19.518156",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2640,27 +230,17 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:29.976284",
+    "timestamp": "2025-06-24T22:27:19.518991",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:29.977768",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:31.825123",
+    "timestamp": "2025-06-24T22:27:21.009950",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2670,27 +250,17 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:31.826812",
+    "timestamp": "2025-06-24T22:27:21.011262",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:31.828305",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:32.268615",
+    "timestamp": "2025-06-24T22:27:21.840153",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2700,27 +270,17 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:32.269877",
+    "timestamp": "2025-06-24T22:27:21.841614",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:32.271026",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:33.791782",
+    "timestamp": "2025-06-24T22:27:22.661528",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2730,27 +290,17 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:33.793673",
+    "timestamp": "2025-06-24T22:27:22.662449",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:33.795548",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:34.416414",
+    "timestamp": "2025-06-24T22:27:23.062654",
     "person_id": "person_001",
     "confidence": 1.0,
     "track_id": 1,
@@ -2760,20 +310,10 @@
     }
   },
   {
-    "timestamp": "2025-06-24T08:45:34.417639",
+    "timestamp": "2025-06-24T22:27:23.063641",
     "person_id": "person_002",
     "confidence": 1.0,
     "track_id": 2,
-    "metadata": {
-      "action": "track_updated",
-      "reason": "existing_track_assignment"
-    }
-  },
-  {
-    "timestamp": "2025-06-24T08:45:34.418776",
-    "person_id": "person_003",
-    "confidence": 1.0,
-    "track_id": 3,
     "metadata": {
       "action": "track_updated",
       "reason": "existing_track_assignment"
