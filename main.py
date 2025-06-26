@@ -50,6 +50,10 @@ Examples:
                       help='Input video file path')
     parser.add_argument('--output', '-o', 
                       help='Output directory for results (optional)')
+    parser.add_argument('--output-video', 
+                      help='Output path for annotated video (e.g., output.mp4)')
+    parser.add_argument('--save-video', action='store_true',
+                      help='Save annotated video output')
     
     # Features
     parser.add_argument('--enable-gait', action='store_true',
@@ -93,6 +97,17 @@ def configure_system(args):
     config.video.display_window = not args.no_display
     if args.max_frames:
         config.video.max_frames = args.max_frames
+    
+    # Video saving configuration
+    if args.save_video or args.output_video:
+        config.video.save_annotated_video = True
+        if args.output_video:
+            config.video.output_video_path = args.output_video
+        else:
+            # Auto-generate output path
+            input_path = Path(args.input)
+            output_name = f"{input_path.stem}_annotated{input_path.suffix}"
+            config.video.output_video_path = str(input_path.parent / output_name)
     
     # Feature flags
     if args.enable_all:

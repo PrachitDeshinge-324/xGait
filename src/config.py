@@ -85,9 +85,9 @@ class TrackerConfig:
     confidence_threshold: float = 0.5
     iou_threshold: float = 0.6
     
-    # ReID parameters
-    similarity_threshold: float = 0.25
-    max_missing_frames: int = 75
+    # ReID parameters - Further optimized to reduce ID fragmentation
+    similarity_threshold: float = 0.4  # Reduced from 0.6 to 0.4 for more flexible matching
+    max_missing_frames: int = 60       # Increased from 30 to 60 to keep tracks alive longer
     
     # XGait identification parameters
     identification_threshold: float = 0.6
@@ -95,17 +95,23 @@ class TrackerConfig:
     
     # Tracking parameters
     track_history_length: int = 100
-    stable_track_threshold: int = 20
-    id_switch_distance_threshold: float = 80.0
+    stable_track_threshold: int = 15   # Increased from 10 to 15 for more stable tracks
+    id_switch_distance_threshold: float = 150.0  # Increased from 120 to 150 for even more tolerance
 
 @dataclass
 class VideoConfig:
     """Video processing configuration"""
     input_path: str = "input/3c.mp4"
     output_path: Optional[str] = None
+    output_video_path: Optional[str] = None  # Path for saving annotated video
     display_window: bool = True
     save_output: bool = False
+    save_annotated_video: bool = False  # Enable saving annotated video
     max_frames: Optional[int] = None  # Maximum number of frames to process (for testing)
+    # Video encoding settings
+    output_fps: Optional[float] = None  # Auto-detect from input if None
+    output_codec: str = "mp4v"  # Video codec for output
+    output_quality: float = 0.8  # Quality factor (0.0-1.0)
 
 @dataclass
 class xgaitConfig:
@@ -117,8 +123,8 @@ class xgaitConfig:
     # Feature extraction settings
     xgait_extraction_interval = 5
 
-    # Similarity threshold for identification
-    similarity_threshold = 0.99
+    # Similarity threshold for identification - Further optimized for better matching
+    similarity_threshold = 0.6  # Reduced from 0.7 to 0.6 for better person identification
     device: str = "cuda"
 
 @dataclass

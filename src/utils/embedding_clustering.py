@@ -21,6 +21,7 @@ from pathlib import Path
 import json
 import logging
 from typing import Dict, List, Tuple, Optional, Any
+from collections import defaultdict
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -48,14 +49,14 @@ class EmbeddingClusterAnalyzer:
         
         logger.info(f"📊 Clustering analyzer initialized - output: {self.output_dir}")
     
-    def analyze_gallery_embeddings(self, gallery: Dict[str, np.ndarray], 
+    def analyze_gallery_embeddings(self, gallery: Dict[str, Any], 
                                  track_features: Dict[int, List[np.ndarray]] = None,
                                  save_results: bool = True) -> Dict[str, Any]:
         """
         Comprehensive analysis of gallery embeddings with multiple clustering methods
         
         Args:
-            gallery: Gallery embeddings {person_id: embedding}
+            gallery: Gallery embeddings {person_id: embedding or dict with 'centroid'/'embeddings'}
             track_features: Track features {track_id: [embeddings]}
             save_results: Whether to save analysis results
             
@@ -68,9 +69,25 @@ class EmbeddingClusterAnalyzer:
         
         logger.info(f"📊 Starting clustering analysis - {len(gallery)} gallery persons")
         
-        # Prepare data
+        # Prepare data - handle both old and new gallery formats
         person_ids = list(gallery.keys())
-        embeddings = np.array([gallery[pid] for pid in person_ids])
+        embeddings_list = []
+        
+        for pid in person_ids:
+            person_data = gallery[pid]
+            
+            # Check if this is the new dynamic gallery format
+            if isinstance(person_data, dict) and 'centroid' in person_data:
+                # Use centroid as representative embedding for the person
+                embeddings_list.append(person_data['centroid'])
+            elif isinstance(person_data, dict) and 'embeddings' in person_data:
+                # Fallback to latest embedding if no centroid
+                embeddings_list.append(person_data['embeddings'][-1])
+            else:
+                # Old format - direct embedding
+                embeddings_list.append(person_data)
+        
+        embeddings = np.array(embeddings_list)
         
         # Add track features if provided
         track_embeddings = []
@@ -978,42 +995,46 @@ Analysis Summary:
             return [self._make_json_serializable(item) for item in obj]
         else:
             return obj
+    
+    def _analyze_dimensionality_reduction_person_aware(self, embeddings: np.ndarray, 
+                                                     labels: List[str], 
+                                                     info: List[Dict]) -> Dict[str, Any]:
+        """Person-aware dimensionality reduction analysis"""
+        # For now, use the standard method but could be enhanced
+        return self._analyze_dimensionality_reduction(embeddings, labels, info)
+    
+    def _analyze_clustering_person_aware(self, embeddings: np.ndarray, 
+                                       labels: List[str], 
+                                       info: List[Dict],
+                                       person_ids: List[str]) -> Dict[str, Any]:
+        """Person-aware clustering analysis"""
+        # For now, use the standard method but could be enhanced
+        return self._analyze_clustering(embeddings, labels, info)
+    
+    def _analyze_similarity_patterns_person_aware(self, embeddings: np.ndarray, 
+                                                 labels: List[str], 
+                                                 info: List[Dict],
+                                                 person_ids: List[str]) -> Dict[str, Any]:
+        """Person-aware similarity analysis"""
+        # For now, use the standard method but could be enhanced
+        return self._analyze_similarity_patterns(embeddings, labels, info)
+    
+    def _assess_identification_quality(self, gallery_embeddings: np.ndarray, 
+                                     person_ids: List[str],
+                                     person_track_features: Dict[str, List[np.ndarray]]) -> Dict[str, Any]:
+        """Enhanced quality assessment for identification"""
+        # For now, use the standard method but could be enhanced
+        track_embeddings = []
+        for features_list in person_track_features.values():
+            track_embeddings.extend(features_list)
+        return self._assess_embedding_quality(gallery_embeddings, person_ids, track_embeddings)
+    
+    def _create_person_aware_visualizations(self, embeddings: np.ndarray, 
+                                          labels: List[str], 
+                                          info: List[Dict],
+                                          results: Dict,
+                                          person_ids: List[str]) -> Dict[str, str]:
+        """Create person-aware visualizations"""
+        # For now, use the standard method but could be enhanced
+        return self._create_comprehensive_visualizations(embeddings, labels, info, results)
 
-
-def create_clustering_analyzer(**kwargs) -> EmbeddingClusterAnalyzer:
-    """Factory function to create EmbeddingClusterAnalyzer"""
-    return EmbeddingClusterAnalyzer(**kwargs)
-
-
-if __name__ == "__main__":
-    # Test the clustering analyzer
-    print("🧪 Testing Embedding Clustering Analyzer")
-    
-    # Create analyzer
-    analyzer = EmbeddingClusterAnalyzer()
-    
-    # Generate test data
-    np.random.seed(42)
-    test_gallery = {
-        f"person_{i}": np.random.randn(256) + i * 0.5 
-        for i in range(5)
-    }
-    
-    test_track_features = {
-        1: [np.random.randn(256) + 0.1],
-        2: [np.random.randn(256) + 1.1],
-        3: [np.random.randn(256) + 2.1]
-    }
-    
-    # Run analysis
-    results = analyzer.analyze_gallery_embeddings(
-        gallery=test_gallery,
-        track_features=test_track_features,
-        save_results=True
-    )
-    
-    print(f"✅ Analysis completed with {len(results)} components")
-    if 'visualizations' in results:
-        print(f"📊 Visualizations saved: {list(results['visualizations'].keys())}")
-    if 'report_path' in results:
-        print(f"📄 Report saved to: {results['report_path']}")

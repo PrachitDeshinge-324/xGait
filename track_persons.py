@@ -36,7 +36,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.config import SystemConfig, xgaitConfig
 from src.trackers.person_tracker import PersonTracker
-from src.utils.visualization import TrackingVisualizer
+from src.utils.visualization import TrackingVisualizer, VideoWriter
 from src.models.silhouette_model import SilhouetteExtractor
 from src.models.parsing_model import HumanParsingModel
 from src.models.xgait_model import create_xgait_inference
@@ -65,6 +65,7 @@ class PersonTrackingApp:
         )
         
         self.visualizer = TrackingVisualizer()
+        self.video_writer = None
         
         # Initialize GaitParsing pipeline which includes the real XGait model
         if self.enable_gait_parsing:
@@ -101,7 +102,8 @@ class PersonTrackingApp:
             self.gait_identification = SimpleGaitIdentification(
                 gallery_file="gallery_data/simple_gallery.json",
                 similarity_threshold=0.7,     # Realistic threshold for XGait features
-                sequence_length=30           # 30-frame sequences for feature extraction
+                sequence_length=30,          # 30-frame sequences for feature extraction
+                verbose=self.config.verbose  # Enable debug output when --debug is used
             )
             
             if self.enable_gait_parsing and self.xgait_model:
@@ -195,6 +197,14 @@ class PersonTrackingApp:
             except:
                 pass
         
+        # Cleanup video writer
+        if hasattr(self, 'video_writer') and self.video_writer:
+            try:
+                self.video_writer.release()
+                self.video_writer = None
+            except:
+                pass
+        
         # Save gallery data if available
         if hasattr(self, 'gait_identification') and self.gait_identification:
             try:
@@ -214,9 +224,28 @@ class PersonTrackingApp:
         # Get video properties
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        # Initialize video writer if saving is enabled
+        if self.config.video.save_annotated_video and self.config.video.output_video_path:
+            output_fps = self.config.video.output_fps or fps
+            codec = self.config.video.output_codec
+            
+            self.video_writer = VideoWriter(
+                output_path=self.config.video.output_video_path,
+                fps=output_fps,
+                frame_size=(frame_width, frame_height),
+                codec=codec,
+                quality=self.config.video.output_quality
+            )
+            self.video_writer.open()
         
         if self.config.verbose:
             print(f"📹 Video properties: {total_frames} frames @ {fps} FPS")
+            print(f"📐 Resolution: {frame_width}x{frame_height}")
+            if self.video_writer:
+                print(f"💾 Saving annotated video to: {self.config.video.output_video_path}")
             print("Press 'q' to quit, 'space' to pause")
         
         frame_count = 0
@@ -243,8 +272,8 @@ class PersonTrackingApp:
                 if self.enable_identification and tracking_results:
                     self._extract_and_store_crops(frame, tracking_results)
                     
-                    # Perform identification every 5 frames for real-time XGait features
-                    if frame_count % 5 == 0:  # Run identification every 5 frames for faster response
+                    # Perform identification every 15 frames for stability (reduced frequency)
+                    if frame_count % 15 == 0:  # Reduced from 5 to 15 frames
                         self._run_identification()
                 
                 # Process GaitParsing pipeline for every frame for each track (parallel)
@@ -260,23 +289,27 @@ class PersonTrackingApp:
                 # Update statistics
                 self._update_statistics(tracking_results, frame_count)
                 
-                # Create visualization
+                # Create visualization with modern design
+                annotated_frame = self.visualizer.draw_tracking_results(
+                    frame=frame,
+                    tracking_results=tracking_results,
+                    track_history=self.track_history,
+                    stable_tracks=self.stable_tracks,
+                    frame_count=frame_count,
+                    max_track_id=self.max_track_id_seen,
+                    identification_results=self.identification_results if self.enable_identification else None,
+                    identification_confidence=self.identification_confidence if self.enable_identification else None,
+                    gallery_stats=self.get_gallery_stats() if self.enable_identification else None,
+                    identification_stats=self.get_identification_stats() if self.enable_identification else None
+                )
+                
+                # Save frame to video if enabled
+                if self.video_writer and self.video_writer.is_opened():
+                    self.video_writer.write_frame(annotated_frame)
+                
+                # Display frame if window is enabled
                 if self.config.video.display_window:
-                    annotated_frame = self.visualizer.draw_tracking_results(
-                        frame=frame,
-                        tracking_results=tracking_results,
-                        track_history=self.track_history,
-                        stable_tracks=self.stable_tracks,
-                        frame_count=frame_count,
-                        max_track_id=self.max_track_id_seen
-                    )
-                    
-                    # Add identification information to the frame
-                    if self.enable_identification:
-                        annotated_frame = self._add_identification_overlay(annotated_frame, tracking_results)
-                    
-                    # Display frame
-                    cv2.imshow("XGait Tracker + Identification", annotated_frame)
+                    cv2.imshow("Person Tracking & Identification", annotated_frame)
                 
                 # Periodic memory cleanup
                 if frame_count % 500 == 0:
@@ -330,6 +363,11 @@ class PersonTrackingApp:
         cap.release()
         if self.config.video.display_window:
             cv2.destroyAllWindows()
+        
+        # Cleanup video writer
+        if self.video_writer:
+            self.video_writer.release()
+            self.video_writer = None
         
         # Cleanup GaitParsing thread pool
         if self.enable_gait_parsing and self.parsing_executor:
@@ -474,32 +512,37 @@ class PersonTrackingApp:
                     self.track_crops[track_id].pop(0)
     
     def _run_identification(self) -> None:
-        """Run identification using simplified gait identification system"""
+        """Run identification using simplified gait identification system with cross-track conflict resolution"""
         if not self.enable_identification or not self.gait_identification:
             return
             
         try:
-            # Use the simplified identification system to extract features and identify
+            # Get all tracks that have sequences and extract features
             frame_track_features = {}
             
-            # Get all tracks that have sequences in the simplified system
             for track_id in list(self.gait_identification.track_sequences.keys()):
                 # Try to extract features using the simplified system
                 features = self.gait_identification.extract_gait_features(track_id, self.xgait_model)
                 if features is not None and features.size > 0:
                     frame_track_features[track_id] = features
             
+            # Process all identifications together with enhanced conflict resolution and validation
             if frame_track_features:
-                # Process all tracks in this frame, ensuring no duplicate assignments
-                frame_results = self.gait_identification.process_frame_identifications(frame_track_features)
+                identification_updates = self.gait_identification.process_frame_with_validation(frame_track_features)
                 
                 # Update identification results
-                for track_id, (person_id, confidence) in frame_results.items():
+                for track_id, (person_id, confidence) in identification_updates.items():
+                    old_person_id = self.identification_results.get(track_id)
                     self.identification_results[track_id] = person_id
                     self.identification_confidence[track_id] = confidence
                     
                     if self.config.verbose:
-                        print(f"🔍 Track {track_id} identified as '{person_id}' (confidence: {confidence:.3f})")
+                        # Log new assignments or changes
+                        if old_person_id != person_id:
+                            if old_person_id is None:
+                                print(f"🔍 Track {track_id} identified as '{person_id}' (confidence: {confidence:.3f})")
+                            else:
+                                print(f"� Track {track_id} reassigned from '{old_person_id}' to '{person_id}' (confidence: {confidence:.3f})")
             
         except Exception as e:
             if self.config.verbose:
@@ -792,88 +835,6 @@ class PersonTrackingApp:
             "total_features": gallery_stats.get("num_persons", 0),
             "avg_features_per_person": 1.0  # Simplified system has 1 feature per person
         }
-    
-    def _add_identification_overlay(self, frame: np.ndarray, tracking_results: List[Tuple[int, any, float]]) -> np.ndarray:
-        """Add identification information overlay to the frame"""
-        overlay_frame = frame.copy()
-        
-        # Add identification results for each track
-        for track_id, box, conf in tracking_results:
-            if track_id in self.identification_results:
-                person_id = self.identification_results[track_id]
-                id_confidence = self.identification_confidence.get(track_id, 0.0)
-                
-                # Get bounding box coordinates
-                x1, y1, x2, y2 = box.astype(int)
-                
-                # Choose color based on identification status
-                if person_id != "Unknown":
-                    text_color = (0, 255, 0)  # Green for identified
-                    text = f"{person_id} ({id_confidence:.2f})"
-                else:
-                    text_color = (0, 255, 255)  # Yellow for unknown
-                    text = "Unknown"
-                
-                # Draw identification text below the bounding box
-                text_y = y2 + 20
-                cv2.putText(overlay_frame, text, (x1, text_y), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
-                
-                # Add XGait sequence status for tracks with gait parsing enabled
-                if self.enable_gait_parsing and track_id in self.track_silhouettes:
-                    seq_length = len(self.track_silhouettes[track_id])
-                    has_features = track_id in self.track_gait_features and len(self.track_gait_features[track_id]) > 0
-                    
-                    if seq_length >= self.min_sequence_length:
-                        status_color = (0, 255, 0) if has_features else (255, 255, 0)  # Green if features, yellow if ready
-                        status_text = f"XGait: {seq_length}f {'[Y]' if has_features else '[R]'}"
-                    else:
-                        status_color = (128, 128, 128)  # Gray if building
-                        status_text = f"XGait: {seq_length}/{self.min_sequence_length}f"
-                    
-                    # Draw sequence status below identification
-                    seq_y = text_y + 20
-                    cv2.putText(overlay_frame, status_text, (x1, seq_y), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, status_color, 1)
-        
-        # Add comprehensive statistics in the top-right corner
-        stats = self.get_identification_stats()
-        xgait_stats = self.get_xgait_statistics() if self.enable_gait_parsing else None
-        
-        info_text = []
-        if stats:
-            info_text.extend([
-                f"Gallery: {stats['gallery_persons']} persons",
-                f"Identified: {stats['identified_tracks']}/{stats['total_tracks']} tracks",
-                f"Rate: {stats['identification_rate']:.1f}%"
-            ])
-        
-        if xgait_stats:
-            info_text.extend([
-                "",  # Empty line
-                f"XGait Tracks: {xgait_stats['total_tracks']}",
-                f"Seq Ready: {xgait_stats['sequence_ready_tracks']}",
-                f"With Features: {xgait_stats['tracks_with_features']}",
-                f"Avg Seq Len: {xgait_stats['avg_sequence_length']:.1f}f"
-            ])
-        
-        if info_text:
-            # Draw background rectangle
-            text_height = 20
-            text_width = 350
-            start_y = 30
-            cv2.rectangle(overlay_frame, (overlay_frame.shape[1] - text_width - 10, start_y - 5), 
-                         (overlay_frame.shape[1] - 10, start_y + len(info_text) * text_height + 10), 
-                         (0, 0, 0), -1)
-            
-            # Draw text
-            for i, text in enumerate(info_text):
-                if text:  # Skip empty lines
-                    y_pos = start_y + (i + 1) * text_height
-                    cv2.putText(overlay_frame, text, (overlay_frame.shape[1] - text_width, y_pos), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        
-        return overlay_frame
     
     def _save_debug_visualization(self, frame: np.ndarray, tracking_results: List[Tuple[int, any, float]], frame_count: int) -> None:
         """Save comprehensive debug visualization for all active tracks with enhanced features"""
@@ -1200,12 +1161,13 @@ class PersonTrackingApp:
             if hasattr(self.gait_identification, 'gallery'):
                 gallery_embeddings = self.gait_identification.gallery.copy()
             
-            # Get track features for analysis
+            # Get track features for analysis - use the same features that identification system uses
             track_features = {}
-            if hasattr(self, 'track_gait_features'):
+            if hasattr(self.gait_identification, 'track_features'):
+                # Use the features stored in the identification system (these are compatible with gallery)
                 track_features = {
-                    track_id: features for track_id, features in self.track_gait_features.items()
-                    if len(features) > 0
+                    track_id: [features] for track_id, features in self.gait_identification.track_features.items()
+                    if features is not None and features.size > 0
                 }
             
             print(f"📊 Analyzing {len(gallery_embeddings)} gallery persons and {len(track_features)} tracks with features")

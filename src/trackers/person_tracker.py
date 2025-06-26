@@ -110,7 +110,7 @@ class PersonTracker:
                                   current_features: torch.Tensor, 
                                   current_boxes: np.ndarray) -> List[int]:
         """
-        Match current detections to existing tracks using appearance similarity
+        Match current detections to existing tracks using appearance similarity and spatial proximity
         
         Args:
             current_features: Feature vectors for current detections
@@ -141,18 +141,43 @@ class PersonTracker:
                 current_features, track_features_tensor
             )
             
-            # Greedy assignment (Hungarian algorithm would be better but this is simpler)
+            # Enhanced assignment with spatial constraints
             similarity_np = similarity_matrix.cpu().numpy()
             used_tracks = set()
             
+            # Calculate spatial distances for additional constraint
+            spatial_weights = np.ones_like(similarity_np)
+            
+            for i, current_box in enumerate(current_boxes):
+                current_center = np.array([(current_box[0] + current_box[2]) / 2, 
+                                         (current_box[1] + current_box[3]) / 2])
+                
+                for j, track_id in enumerate(track_ids):
+                    if track_id in self.track_history and len(self.track_history[track_id]) > 0:
+                        # Get last known position of track
+                        last_pos = np.array(self.track_history[track_id][-1][:2])
+                        spatial_distance = np.linalg.norm(current_center - last_pos)
+                        
+                        # Apply spatial penalty if distance is too large
+                        max_spatial_distance = 200.0  # Maximum reasonable movement between frames
+                        if spatial_distance > max_spatial_distance:
+                            spatial_weights[i, j] = 0.1  # Heavily penalize distant matches
+                        else:
+                            # Slight preference for closer matches
+                            spatial_weights[i, j] = 1.0 - (spatial_distance / max_spatial_distance) * 0.3
+            
+            # Apply spatial weighting to similarity scores
+            weighted_similarity = similarity_np * spatial_weights
+            
+            # Improved greedy assignment with spatial awareness
             for i in range(len(current_features)):
                 best_match_idx = -1
                 best_similarity = -1
                 
                 for j, track_id in enumerate(track_ids):
-                    if j not in used_tracks and similarity_np[i, j] > self.config.similarity_threshold:
-                        if similarity_np[i, j] > best_similarity:
-                            best_similarity = similarity_np[i, j]
+                    if j not in used_tracks and weighted_similarity[i, j] > self.config.similarity_threshold:
+                        if weighted_similarity[i, j] > best_similarity:
+                            best_similarity = weighted_similarity[i, j]
                             best_match_idx = j
                 
                 if best_match_idx >= 0:
@@ -160,9 +185,31 @@ class PersonTracker:
                     assignments.append(track_ids[best_match_idx])
                     used_tracks.add(best_match_idx)
                 else:
-                    # Create new track
-                    assignments.append(self.next_id)
-                    self.next_id += 1
+                    # Before creating new track, check if any track is very close spatially
+                    # This helps prevent fragmentation due to brief appearance changes
+                    current_center = np.array([(current_boxes[i][0] + current_boxes[i][2]) / 2, 
+                                             (current_boxes[i][1] + current_boxes[i][3]) / 2])
+                    
+                    min_spatial_distance = float('inf')
+                    closest_track_idx = -1
+                    
+                    for j, track_id in enumerate(track_ids):
+                        if j not in used_tracks and track_id in self.track_history and len(self.track_history[track_id]) > 0:
+                            last_pos = np.array(self.track_history[track_id][-1][:2])
+                            spatial_distance = np.linalg.norm(current_center - last_pos)
+                            
+                            if spatial_distance < min_spatial_distance and spatial_distance < 100.0:  # Very close threshold
+                                min_spatial_distance = spatial_distance
+                                closest_track_idx = j
+                    
+                    # If we found a very close track, assign to it even with lower appearance similarity
+                    if closest_track_idx >= 0 and similarity_np[i, closest_track_idx] > 0.2:  # Lower threshold for spatial matches
+                        assignments.append(track_ids[closest_track_idx])
+                        used_tracks.add(closest_track_idx)
+                    else:
+                        # Create new track
+                        assignments.append(self.next_id)
+                        self.next_id += 1
         else:
             # Fallback: create new IDs
             for _ in range(len(current_features)):
@@ -190,8 +237,13 @@ class PersonTracker:
         active_tracks = set()
         
         for track_id, feature, box, crop in zip(track_ids, features, boxes, crops):
-            # Update track feature (exponential moving average)
-            alpha = 0.7
+            # Update track feature with adaptive exponential moving average
+            # Use more conservative update for stable tracks to maintain identity
+            if track_id in self.stable_tracks:
+                alpha = 0.8  # More conservative update for stable tracks
+            else:
+                alpha = 0.6  # Faster adaptation for new tracks
+                
             if track_id in self.track_features:
                 self.track_features[track_id] = (
                     alpha * feature + (1 - alpha) * self.track_features[track_id]

@@ -68,3 +68,8 @@ Thumbs.db
 *.tmp
 *.bak
 *.old
+
+gallery_data/*
+gallery_analysis/*
+clustering_analysis/*
+*.json
