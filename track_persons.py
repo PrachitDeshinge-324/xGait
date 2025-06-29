@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Person Tracking Application with Custom TransReID and XGait Identification
-A modular, high-performance person tracking system using YOLO + Custom ReID + XGait Identification
+Person Tracking Application with XGait Feature Extraction
+A modular, high-performance person tracking system using YOLO + XGait Feature Extraction
 
 Features:
-- Custom TransReID model for appearance-based re-identification
-- XGait-based person identification for known persons
+- YOLO-based person detection and tracking
+- XGait-based feature extraction for gait analysis
 - Modular architecture with clean separation of concerns
-- High accuracy multi-person tracking (87.5% accuracy achieved)
+- High accuracy multi-person tracking
 - Real-time visualization and statistics
-- Person identification and gallery management
 """
 
 import cv2
@@ -30,6 +29,7 @@ matplotlib.use('Agg')  # Use non-interactive backend for thread safety
 import matplotlib.pyplot as plt
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from tqdm import tqdm
 
 # Add src to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -40,23 +40,18 @@ from src.utils.visualization import TrackingVisualizer, VideoWriter
 from src.models.silhouette_model import SilhouetteExtractor
 from src.models.parsing_model import HumanParsingModel
 from src.models.xgait_model import create_xgait_inference
-from src.models.xgait_adapter import XGaitAdapter
-from src.models.simple_gait_identification import SimpleGaitIdentification
-from src.utils.embedding_clustering import EmbeddingClusterAnalyzer
-
-# Import the simple inference pipeline
-from simple_inference_pipeline import create_simple_inference_pipeline
 
 class PersonTrackingApp:
     """
-    Main application for person tracking with custom TransReID and XGait identification
+    Main application for person tracking with XGait feature extraction
     """
-    def __init__(self, config: SystemConfig, enable_identification: bool = True, enable_gait_parsing: bool = True):
+    def __init__(self, config: SystemConfig, enable_identification: bool = False, enable_gait_parsing: bool = True):
         self.config = config
         self.config.validate()
         self.enable_identification = enable_identification
         self.enable_gait_parsing = enable_gait_parsing
-        
+        self.gallery_loaded = False
+
         # Initialize components
         self.tracker = PersonTracker(
             yolo_model_path=config.model.yolo_model_path,
@@ -69,13 +64,34 @@ class PersonTrackingApp:
         
         # Initialize GaitParsing pipeline which includes the real XGait model
         if self.enable_gait_parsing:
+            # Import gallery manager and visualization
+            from src.utils.identity_gallery import IdentityGalleryManager
+            from src.utils.embedding_visualization import EmbeddingVisualizer
+            
             self.silhouette_extractor = SilhouetteExtractor(device=config.model.device)
             self.parsing_model = HumanParsingModel(model_path='weights/parsing_u2net.pth', device=config.model.device)
             self.xgait_model = create_xgait_inference(model_path='weights/Gait3D-XGait-120000.pt', device=config.model.get_model_device("xgait"))
             
+            # Initialize identity gallery manager with more permissive settings
+            self.gallery_manager = IdentityGalleryManager(
+                similarity_threshold=0.6,  # More permissive for initial matching
+                min_quality_threshold=0.4  # Lower quality threshold to catch more tracks
+                # embedding_update_strategy="weighted_average"
+            )
+            
+            # Connect gallery manager to XGait model
+            self.xgait_model.set_gallery_manager(self.gallery_manager)
+            
+            # Initialize embedding visualizer
+            self.embedding_visualizer = EmbeddingVisualizer()
+            
             # Create debug output directory
             self.debug_output_dir = Path("debug_gait_parsing")
             self.debug_output_dir.mkdir(exist_ok=True)
+            
+            # Create visualization output directory
+            self.visualization_output_dir = Path("visualization_analysis")
+            self.visualization_output_dir.mkdir(exist_ok=True)
             
             # Thread pool for parallel processing
             self.parsing_executor = ThreadPoolExecutor(max_workers=2)
@@ -86,52 +102,19 @@ class PersonTrackingApp:
             
             print("✅ GaitParsing pipeline initialized")
             print(f"   Debug output: {self.debug_output_dir}")
+            print(f"   Visualization output: {self.visualization_output_dir}")
             print(f"   XGait model weights loaded: {self.xgait_model.is_model_loaded()}")
+            print(f"   Gallery manager active: {self.gallery_manager is not None}")
         else:
             self.silhouette_extractor = None
             self.parsing_model = None
             self.xgait_model = None
+            self.gallery_manager = None
+            self.embedding_visualizer = None
             self.parsing_executor = None
             self.parsing_queue = None
             self.visualization_queue = None
             print("⚠️  GaitParsing disabled")
-        
-        # Initialize identification using the simplified XGait system
-        if self.enable_identification:
-            # Initialize Simple Gait Identification system
-            self.gait_identification = SimpleGaitIdentification(
-                gallery_file="gallery_data/simple_gallery.json",
-                similarity_threshold=0.7,     # Realistic threshold for XGait features
-                sequence_length=30,          # 30-frame sequences for feature extraction
-                verbose=self.config.verbose  # Enable debug output when --debug is used
-            )
-            
-            if self.enable_gait_parsing and self.xgait_model:
-                # Use the real XGait model for identification with simplified gallery
-                self.identification_pipeline = self.xgait_model  # Direct reference to real model
-                print("✅ Identification pipeline initialized with real XGait model and simple gallery")
-            else:
-                # Fallback to simple pipeline if gait parsing is disabled
-                self.identification_pipeline = create_simple_inference_pipeline(
-                    device=config.model.device,
-                    identification_threshold=0.6,
-                    parallel_processing=True,
-                    max_workers=4
-                )
-                print("⚠️  Identification pipeline using placeholder (enable gait parsing for real XGait)")
-        else:
-            self.identification_pipeline = None
-            self.gait_identification = None
-            print("⚠️  Identification disabled")
-        
-        # Initialize clustering analyzer for advanced visualization
-        if self.enable_identification:
-            self.clustering_analyzer = EmbeddingClusterAnalyzer(
-                output_dir="clustering_analysis"
-            )
-            print("📊 Clustering analyzer initialized for embedding visualization")
-        else:
-            self.clustering_analyzer = None
         
         # Tracking statistics
         self.track_history = defaultdict(list)
@@ -139,12 +122,6 @@ class PersonTrackingApp:
         self.stable_tracks = set()
         self.new_id_creations = []
         self.max_track_id_seen = 0
-        
-        # Identification data
-        self.track_crops = defaultdict(list)  # Store crops for each track
-        self.identification_results = {}  # Store identification results
-        self.identification_confidence = {}  # Store identification confidence
-        self.crop_buffer_size = 10  # Number of crops to keep per track
         
         # GaitParsing data - Enhanced sequence buffering
         self.track_parsing_results = defaultdict(list)  # Store parsing results for each track
@@ -165,7 +142,6 @@ class PersonTrackingApp:
         print(f"   Data type: {config.model.dtype}")
         print(f"   Autocast: {config.model.use_autocast}")
         print(f"   Model compilation: {config.model.use_compile}")
-        print(f"   Identification: {self.enable_identification}")
         print(f"   GaitParsing: {self.enable_gait_parsing}")
         
         # Print device information
@@ -180,17 +156,68 @@ class PersonTrackingApp:
         if 'cuda_version' in device_info:
             print(f"   • CUDA version: {device_info['cuda_version']}")
         print()
+    
+    def _compute_sequence_quality(self, silhouette_sequence: List[np.ndarray]) -> float:
+        """
+        Compute quality score for a silhouette sequence based on consistency and completeness
         
-        # Check XGait utilization for optimization recommendations
-        if self.enable_gait_parsing and self.xgait_model:
-            self.check_xgait_utilization()
+        Args:
+            silhouette_sequence: List of silhouette masks
+            
+        Returns:
+            Quality score between 0 and 1
+        """
+        if not silhouette_sequence or len(silhouette_sequence) < 2:
+            return 0.0
+        
+        # Metrics for quality assessment
+        qualities = []
+        
+        # 1. Silhouette completeness (average non-zero pixels)
+        completeness_scores = []
+        for sil in silhouette_sequence:
+            if sil.size > 0:
+                non_zero_ratio = np.sum(sil > 0) / sil.size
+                completeness_scores.append(non_zero_ratio)
+        
+        if completeness_scores:
+            avg_completeness = np.mean(completeness_scores)
+            qualities.append(min(avg_completeness * 2, 1.0))  # Scale up moderate completeness
+        
+        # 2. Temporal consistency (similarity between consecutive frames)
+        if len(silhouette_sequence) >= 2:
+            consistency_scores = []
+            for i in range(len(silhouette_sequence) - 1):
+                sil1, sil2 = silhouette_sequence[i], silhouette_sequence[i + 1]
+                if sil1.shape == sil2.shape and sil1.size > 0:
+                    # Simple overlap-based similarity
+                    intersection = np.sum((sil1 > 0) & (sil2 > 0))
+                    union = np.sum((sil1 > 0) | (sil2 > 0))
+                    if union > 0:
+                        consistency_scores.append(intersection / union)
+            
+            if consistency_scores:
+                avg_consistency = np.mean(consistency_scores)
+                qualities.append(avg_consistency)
+        
+        # 3. Sequence length bonus
+        length_bonus = min(len(silhouette_sequence) / 30.0, 1.0)  # Prefer longer sequences up to 30 frames
+        qualities.append(length_bonus)
+        
+        # Combine qualities with weights
+        if qualities:
+            weights = [0.4, 0.4, 0.2][:len(qualities)]  # Completeness, consistency, length
+            final_quality = sum(q * w for q, w in zip(qualities, weights)) / sum(weights)
+            return min(max(final_quality, 0.0), 1.0)
+        
+        return 0.0
     
     def __del__(self):
         """Destructor to ensure proper cleanup"""
         self.cleanup()
     
     def cleanup(self):
-        """Clean up resources and save gallery data"""
+        """Clean up resources"""
         if hasattr(self, 'parsing_executor') and self.parsing_executor:
             try:
                 self.parsing_executor.shutdown(wait=False)
@@ -204,34 +231,22 @@ class PersonTrackingApp:
                 self.video_writer = None
             except:
                 pass
-        
-        # Save gallery data if available
-        if hasattr(self, 'gait_identification') and self.gait_identification:
-            try:
-                self.gait_identification.cleanup()
-                print("💾 Gallery data saved")
-            except Exception as e:
-                print(f"⚠️  Failed to save gallery data: {e}")
     
     def process_video(self) -> None:
         """Process the input video and perform tracking"""
-        
         # Open video
         cap = cv2.VideoCapture(self.config.video.input_path)
         if not cap.isOpened():
             raise ValueError(f"Could not open video: {self.config.video.input_path}")
-        
         # Get video properties
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
         # Initialize video writer if saving is enabled
         if self.config.video.save_annotated_video and self.config.video.output_video_path:
             output_fps = self.config.video.output_fps or fps
             codec = self.config.video.output_codec
-            
             self.video_writer = VideoWriter(
                 output_path=self.config.video.output_video_path,
                 fps=output_fps,
@@ -240,158 +255,126 @@ class PersonTrackingApp:
                 quality=self.config.video.output_quality
             )
             self.video_writer.open()
-        
-        if self.config.verbose:
-            print(f"📹 Video properties: {total_frames} frames @ {fps} FPS")
-            print(f"📐 Resolution: {frame_width}x{frame_height}")
-            if self.video_writer:
-                print(f"💾 Saving annotated video to: {self.config.video.output_video_path}")
-            print("Press 'q' to quit, 'space' to pause")
-        
+        # Hide all prints (except errors)
+        verbose = self.config.verbose
+        self.config.verbose = False
         frame_count = 0
         paused = False
-        
-        while cap.isOpened():
-            if not paused:
-                success, frame = cap.read()
-                if not success:
-                    break
-                
-                frame_count += 1
-                
-                # Check max_frames limit
-                if self.config.video.max_frames and frame_count > self.config.video.max_frames:
-                    if self.config.verbose:
-                        print(f"🛑 Reached max frames limit: {self.config.video.max_frames}")
-                    break
-                
-                # Perform tracking
-                tracking_results = self.tracker.track_persons(frame, frame_count)
-                
-                # Extract person crops and update identification data
-                if self.enable_identification and tracking_results:
-                    self._extract_and_store_crops(frame, tracking_results)
-                    
-                    # Perform identification every 15 frames for stability (reduced frequency)
-                    if frame_count % 15 == 0:  # Reduced from 5 to 15 frames
-                        self._run_identification()
-                
-                # Process GaitParsing pipeline for every frame for each track (parallel)
-                if self.enable_gait_parsing and tracking_results:
-                    self._process_gait_parsing_parallel(frame, tracking_results, frame_count)
-                    
-                    # Collect completed parsing results
-                    self._collect_parsing_results(frame_count)
-                    
-                    # Process visualization queue in main thread (thread-safe)
-                    self._process_visualization_queue(frame_count)
-                
-                # Update statistics
-                self._update_statistics(tracking_results, frame_count)
-                
-                # Create visualization with modern design
-                annotated_frame = self.visualizer.draw_tracking_results(
-                    frame=frame,
-                    tracking_results=tracking_results,
-                    track_history=self.track_history,
-                    stable_tracks=self.stable_tracks,
-                    frame_count=frame_count,
-                    max_track_id=self.max_track_id_seen,
-                    identification_results=self.identification_results if self.enable_identification else None,
-                    identification_confidence=self.identification_confidence if self.enable_identification else None,
-                    gallery_stats=self.get_gallery_stats() if self.enable_identification else None,
-                    identification_stats=self.get_identification_stats() if self.enable_identification else None
-                )
-                
-                # Save frame to video if enabled
-                if self.video_writer and self.video_writer.is_opened():
-                    self.video_writer.write_frame(annotated_frame)
-                
-                # Display frame if window is enabled
+        pbar_total = self.config.video.max_frames if self.config.video.max_frames else total_frames
+        self.track_gait_features.clear()
+        self.track_silhouettes.clear()
+        self.track_parsing_masks.clear()
+        self.track_parsing_results.clear()
+        self.track_last_xgait_extraction.clear()
+        start_time = time.time()
+        last_frame_time = start_time
+        fps_list = []
+        # Load gallery state if file exists
+        try:
+            gallery_state_path = Path("visualization_analysis") / f"gallery_state.json"
+            if os.path.exists(gallery_state_path):
+                self.gallery_manager.load_gallery_state(gallery_state_path)
+                self.gallery_loaded = True
+        except Exception as e:
+            print(f"⚠️  Error loading gallery state: {e}")
+        with tqdm(total=pbar_total, desc="Processing frames", unit="frame") as pbar:
+            while cap.isOpened():
+                if not paused:
+                    success, frame = cap.read()
+                    if not success:
+                        break
+                    frame_count += 1
+                    # Check max_frames limit
+                    if self.config.video.max_frames and frame_count > self.config.video.max_frames:
+                        break
+                    # Perform tracking
+                    tracking_results = self.tracker.track_persons(frame, frame_count)
+                    # Process GaitParsing pipeline for every frame for each track (parallel)
+                    if self.enable_gait_parsing and tracking_results:
+                        self._process_gait_parsing_parallel(frame, tracking_results, frame_count)
+                        self._collect_parsing_results(frame_count)
+                    self._update_statistics(tracking_results, frame_count)
+                    identification_results = {}
+                    identification_confidence = {}
+                    gallery_stats = None
+                    identification_stats = None
+                    if self.enable_gait_parsing and hasattr(self, 'track_identities'):
+                        for track_id, identity_info in self.track_identities.items():
+                            identification_results[track_id] = identity_info['identity']
+                            identification_confidence[track_id] = identity_info['confidence']
+                        if self.gallery_manager:
+                            gallery_stats = self.gallery_manager.get_gallery_summary()
+                            identification_stats = {
+                                'total_identities': gallery_stats.get('num_identities', 0),
+                                'collision_avoided': gallery_stats.get('collision_avoided_count', 0),
+                                'embeddings_processed': gallery_stats.get('total_embeddings_processed', 0)
+                            }
+                    # --- FPS calculation ---
+                    now = time.time()
+                    current_fps = 1.0 / max(now - last_frame_time, 1e-6)
+                    last_frame_time = now
+                    fps_list.append(current_fps)
+                    avg_fps = sum(fps_list) / len(fps_list) if fps_list else 0.0
+                    annotated_frame = self.visualizer.draw_tracking_results(
+                        frame=frame,
+                        tracking_results=tracking_results,
+                        track_history=self.track_history,
+                        stable_tracks=self.stable_tracks,
+                        frame_count=frame_count,
+                        max_track_id=self.max_track_id_seen,
+                        identification_results=identification_results,
+                        identification_confidence=identification_confidence,
+                        gallery_stats=gallery_stats,
+                        identification_stats=identification_stats,
+                        current_fps=current_fps,
+                        avg_fps=avg_fps,
+                        is_new_identity=self.get_is_new_identity_dict(),
+                        gallery_loaded=self.gallery_loaded
+                    )
+                    if self.video_writer and self.video_writer.is_opened():
+                        self.video_writer.write_frame(annotated_frame)
+                    if self.config.video.display_window:
+                        cv2.imshow("Person Tracking & XGait Analysis", annotated_frame)
+                    if frame_count % 500 == 0:
+                        self.tracker.clear_memory_cache()
+                    if frame_count % 300 == 0 and self.gallery_manager:
+                        current_identities = len(self.gallery_manager.identities)
+                        if current_identities > 8:
+                            consolidation_map = self.gallery_manager.consolidate_fragmented_tracks(
+                                consolidation_threshold=0.65
+                            )
+                            if consolidation_map and hasattr(self, 'track_identities'):
+                                for primary_id, track_list in consolidation_map.items():
+                                    for track_id in track_list:
+                                        if track_id in self.track_identities:
+                                            self.track_identities[track_id]['identity'] = primary_id
+                    pbar.update(1)
                 if self.config.video.display_window:
-                    cv2.imshow("Person Tracking & Identification", annotated_frame)
-                
-                # Periodic memory cleanup
-                if frame_count % 500 == 0:
-                    self.tracker.clear_memory_cache()
-                
-                # Progress update with device memory info
-                if self.config.verbose and frame_count % 100 == 0:
-                    progress = (frame_count / total_frames) * 100
-                    device_info = self.tracker.get_device_info()
-                    memory_info = device_info.get('memory_usage', {})
-                    
-                    memory_str = ""
-                    if 'allocated' in memory_info:
-                        allocated_mb = memory_info['allocated'] / (1024**2)
-                        memory_str = f" - Memory: {allocated_mb:.1f}MB"
-                    elif 'system_memory' in memory_info:
-                        memory_str = f" - System Memory: {memory_info['system_memory']:.1f}%"
-                    
-                    # Add identification stats
-                    id_stats_str = ""
-                    if self.enable_identification:
-                        id_stats = self.get_identification_stats()
-                        identified = id_stats.get('identified_tracks', 0)
-                        total = id_stats.get('total_tracks', 0)
-                        id_stats_str = f" - ID: {identified}/{total}"
-                    
-                    # Add GaitParsing stats
-                    gait_stats_str = ""
-                    if self.enable_gait_parsing:
-                        gait_stats = self.get_gait_parsing_stats()
-                        parsed_tracks = gait_stats.get('tracks_processed', 0)
-                        avg_time = gait_stats.get('avg_processing_time', 0)
-                        gait_stats_str = f" - Gait: {parsed_tracks} tracks ({avg_time:.3f}s avg)"
-                    
-                    print(f"Progress: {progress:.1f}% ({frame_count}/{total_frames}) - "
-                          f"Max ID: {self.max_track_id_seen}{memory_str}{id_stats_str}{gait_stats_str}")
-            
-            # Handle key presses
-            if self.config.video.display_window:
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    break
-                elif key == ord(' '):  # Space to pause/unpause
-                    paused = not paused
-                    if paused:
-                        print("⏸️  Paused - Press space to continue")
-                    else:
-                        print("▶️  Resumed")
-        
-        # Cleanup
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        break
+                    elif key == ord(' '):
+                        paused = not paused
         cap.release()
         if self.config.video.display_window:
             cv2.destroyAllWindows()
-        
-        # Cleanup video writer
         if self.video_writer:
             self.video_writer.release()
             self.video_writer = None
-        
-        # Cleanup GaitParsing thread pool
         if self.enable_gait_parsing and self.parsing_executor:
             try:
-                # Wait for remaining tasks to complete
-                print("🔄 Waiting for GaitParsing tasks to complete...")
                 self.parsing_executor.shutdown(wait=True)
-                
-                # Collect any remaining results
                 self._collect_parsing_results(frame_count if 'frame_count' in locals() else 999)
-                
-                # Print final GaitParsing stats
                 gait_stats = self.get_gait_parsing_stats()
-                if gait_stats:
-                    print(f"\n🎨 GaitParsing Statistics:")
-                    for key, value in gait_stats.items():
-                        print(f"   • {key}: {value}")
             except Exception as e:
-                print(f"⚠️  Error during GaitParsing cleanup: {e}")
-        
-        # Final cleanup
+                pass
         self.tracker.clear_memory_cache()
         self.tracker.synchronize_device()
-
+        if self.enable_gait_parsing:
+            self._generate_comprehensive_analysis(frame_count if 'frame_count' in locals() else 999)
+        if self.enable_gait_parsing and self.gallery_manager:
+            self._perform_track_consolidation()
+        self.config.verbose = verbose
     
     def _update_statistics(self, tracking_results: List[Tuple[int, any, float]], frame_count: int) -> None:
         """Update tracking statistics"""
@@ -486,70 +469,6 @@ class PersonTrackingApp:
         print(f"   • Max missing frames: {self.config.tracker.max_missing_frames}")
         print(f"   • Confidence threshold: {self.config.tracker.confidence_threshold}")
     
-    def _extract_and_store_crops(self, frame: np.ndarray, tracking_results: List[Tuple[int, any, float]]) -> None:
-        """Extract person crops from tracking results and store them for identification"""
-        for track_id, box, conf in tracking_results:
-            x1, y1, x2, y2 = box.astype(int)
-            
-            # Add some padding to the bounding box
-            padding = 10
-            h, w = frame.shape[:2]
-            x1 = max(0, x1 - padding)
-            y1 = max(0, y1 - padding)
-            x2 = min(w, x2 + padding)
-            y2 = min(h, y2 + padding)
-            
-            # Extract crop
-            crop = frame[y1:y2, x1:x2]
-            
-            # Only store crops that are large enough
-            if crop.shape[0] > 50 and crop.shape[1] > 30:
-                # Add to crop buffer for this track
-                self.track_crops[track_id].append(crop.copy())
-                
-                # Keep only recent crops (memory management)
-                if len(self.track_crops[track_id]) > self.crop_buffer_size:
-                    self.track_crops[track_id].pop(0)
-    
-    def _run_identification(self) -> None:
-        """Run identification using simplified gait identification system with cross-track conflict resolution"""
-        if not self.enable_identification or not self.gait_identification:
-            return
-            
-        try:
-            # Get all tracks that have sequences and extract features
-            frame_track_features = {}
-            
-            for track_id in list(self.gait_identification.track_sequences.keys()):
-                # Try to extract features using the simplified system
-                features = self.gait_identification.extract_gait_features(track_id, self.xgait_model)
-                if features is not None and features.size > 0:
-                    frame_track_features[track_id] = features
-            
-            # Process all identifications together with enhanced conflict resolution and validation
-            if frame_track_features:
-                identification_updates = self.gait_identification.process_frame_with_validation(frame_track_features)
-                
-                # Update identification results
-                for track_id, (person_id, confidence) in identification_updates.items():
-                    old_person_id = self.identification_results.get(track_id)
-                    self.identification_results[track_id] = person_id
-                    self.identification_confidence[track_id] = confidence
-                    
-                    if self.config.verbose:
-                        # Log new assignments or changes
-                        if old_person_id != person_id:
-                            if old_person_id is None:
-                                print(f"🔍 Track {track_id} identified as '{person_id}' (confidence: {confidence:.3f})")
-                            else:
-                                print(f"� Track {track_id} reassigned from '{old_person_id}' to '{person_id}' (confidence: {confidence:.3f})")
-            
-        except Exception as e:
-            if self.config.verbose:
-                print(f"⚠️  Identification error: {e}")
-                import traceback
-                traceback.print_exc()
-    
     def _process_gait_parsing_parallel(self, frame: np.ndarray, tracking_results: List[Tuple[int, any, float]], frame_count: int) -> None:
         """Process GaitParsing pipeline for ALL tracks in parallel for EVERY frame"""
         if not self.enable_gait_parsing:
@@ -606,11 +525,7 @@ class PersonTrackingApp:
             parsing_results = self.parsing_model.extract_parsing([crop_resized])
             parsing_mask = parsing_results[0] if parsing_results else np.zeros((256, 128), dtype=np.uint8)
             
-            # Step 3: Store silhouette and parsing mask in simplified sequence buffer
-            if self.enable_identification and self.gait_identification:
-                self.gait_identification.add_silhouette_to_sequence(track_id, silhouette, parsing_mask)
-            
-            # Also store silhouette and parsing mask in sequence buffers for visualization
+            # Step 3: Store silhouette and parsing mask in sequence buffers for visualization
             self.track_silhouettes[track_id].append(silhouette)
             self.track_parsing_masks[track_id].append(parsing_mask)
             
@@ -627,56 +542,66 @@ class PersonTrackingApp:
                 frame_count - self.track_last_xgait_extraction[track_id] >= self.xgait_extraction_interval):
                 
                 try:
-                    # Extract XGait features using the simplified system
-                    if self.enable_identification and self.gait_identification:
-                        feature_vector = self.gait_identification.extract_gait_features(track_id, self.xgait_model)
+                    # Extract XGait features for identification
+                    silhouette_sequence = self.track_silhouettes[track_id].copy()
+                    parsing_sequence = self.track_parsing_masks[track_id].copy()
+                    
+                    # Use the enhanced XGait method with both silhouettes and parsing masks
+                    feature_vector = self.xgait_model.extract_features_from_sequence(
+                        silhouettes=silhouette_sequence,
+                        parsing_masks=parsing_sequence
+                    )
+                    
+                    # Process embedding with gallery manager for identification
+                    if feature_vector.size > 0 and self.gallery_manager is not None:
+                        # Compute sequence quality based on silhouette consistency
+                        sequence_quality = self._compute_sequence_quality(silhouette_sequence)
                         
-                        if feature_vector is not None:
-                            # Store the extracted features for identification
-                            self.track_gait_features[track_id].append(feature_vector)
-                            
-                            # Keep only recent features
-                            if len(self.track_gait_features[track_id]) > 10:
-                                self.track_gait_features[track_id].pop(0)
-                            
-                            # Update last extraction time
-                            self.track_last_xgait_extraction[track_id] = frame_count
-                            xgait_extracted = True
-                            
-                            if self.config.verbose:
-                                print(f"🚶 XGait features extracted for track {track_id}: "
-                                      f"sequence_length=30, "
-                                      f"feature_shape={feature_vector.shape}")
-                        else:
-                            if self.config.verbose:
-                                print(f"⚠️  XGait feature extraction failed for track {track_id}: insufficient frames")
-                            feature_vector = np.zeros(256)
-                    else:
-                        # Fallback extraction for visualization only
-                        silhouette_sequence = self.track_silhouettes[track_id].copy()
-                        parsing_sequence = self.track_parsing_masks[track_id].copy()
-                        
-                        # Use the new enhanced XGait method with both silhouettes and parsing masks
-                        feature_vector = self.xgait_model.extract_features_from_sequence(
-                            silhouettes=silhouette_sequence,
-                            parsing_masks=parsing_sequence
+                        print(f"🔍 Processing track {track_id} for XGait extraction frame number {frame_count} seq Q {sequence_quality}")
+                        # Process through gallery manager with collision avoidance
+                        assigned_identity, confidence, is_new_identity = self.gallery_manager.process_track_embedding(
+                            track_id=track_id,
+                            embedding=feature_vector,
+                            frame_number=frame_count,
+                            sequence_quality=sequence_quality
                         )
                         
-                        # Store the extracted features for identification
-                        self.track_gait_features[track_id].append(feature_vector)
+                        # Update track with identity information
+                        if assigned_identity:
+                            print(f"🎯 Track {track_id} -> {assigned_identity} "
+                                  f"(confidence: {confidence:.3f}, new: {is_new_identity})")
+                            
+                            # Store identity info for visualization
+                            if not hasattr(self, 'track_identities'):
+                                self.track_identities = {}
+                            self.track_identities[track_id] = {
+                                'identity': assigned_identity,
+                                'confidence': confidence,
+                                'is_new': is_new_identity,
+                                'frame_assigned': frame_count
+                            }
+                    
+                    # Store the extracted features for legacy compatibility
+                    self.track_gait_features[track_id].append(feature_vector)
+                    
+                    # Keep only recent features
+                    if len(self.track_gait_features[track_id]) > 10:
+                        self.track_gait_features[track_id].pop(0)
+                    
+                    # Update last extraction time
+                    self.track_last_xgait_extraction[track_id] = frame_count
+                    xgait_extracted = True
+                    
+                    if self.config.verbose:
+                        print(f"🚶 XGait features extracted for track {track_id}: "
+                              f"sequence_length={len(silhouette_sequence)}, "
+                              f"feature_shape={feature_vector.shape}")
                         
-                        # Keep only recent features
-                        if len(self.track_gait_features[track_id]) > 10:
-                            self.track_gait_features[track_id].pop(0)
-                        
-                        # Update last extraction time
-                        self.track_last_xgait_extraction[track_id] = frame_count
-                        xgait_extracted = True
-                        
-                        if self.config.verbose:
-                            print(f"🚶 XGait features extracted for track {track_id}: "
-                                  f"sequence_length={len(silhouette_sequence)}, "
-                                  f"feature_shape={feature_vector.shape}")
+                        # Print gallery stats periodically
+                        if self.gallery_manager and frame_count % 100 == 0:
+                            stats = self.gallery_manager.get_gallery_summary()
+                            print(f"📚 Gallery: {stats['num_identities']} identities, "
+                                  f"{stats['total_embeddings_processed']} embeddings processed")
                         
                 except Exception as e:
                     if self.config.verbose:
@@ -762,8 +687,6 @@ class PersonTrackingApp:
             except queue.Full:
                 pass  # Skip if queue is full
     
-
-    
     def get_gait_parsing_stats(self) -> Dict:
         """Get GaitParsing statistics"""
         if not self.enable_gait_parsing:
@@ -783,57 +706,6 @@ class PersonTrackingApp:
             "total_parsing_results": total_results,
             "avg_processing_time": avg_processing_time,
             "debug_images_saved": len(list(self.debug_output_dir.glob("*.png"))) if self.debug_output_dir.exists() else 0
-        }
-    
-    def add_person_to_gallery(self, person_id: str, track_id: int = None) -> bool:
-        """Add a person to the identification gallery using their track data"""
-        if not self.enable_identification or not self.gait_identification:
-            print("❌ Identification is disabled")
-            return False
-        
-        if track_id is None:
-            print("❌ Track ID must be specified")
-            return False
-        
-        try:
-            # Use XGait features if available
-            if track_id in self.track_gait_features and len(self.track_gait_features[track_id]) > 0:
-                latest_feature = self.track_gait_features[track_id][-1]  # Use most recent XGait features
-                
-                # Add to simplified gallery
-                self.gait_identification.gallery[person_id] = latest_feature.copy()
-                self.gait_identification._save_gallery()
-                
-                print(f"✅ Added '{person_id}' to gallery using XGait features from track {track_id}")
-                return True
-            else:
-                print(f"❌ No XGait features available for track {track_id}")
-                return False
-            
-        except Exception as e:
-            print(f"❌ Error adding person to gallery: {e}")
-            return False
-    
-    def get_identification_stats(self) -> Dict:
-        """Get identification statistics"""
-        if not self.enable_identification or not self.gait_identification:
-            return {}
-        
-        # Get gallery statistics from simplified system
-        gallery_stats = self.gait_identification.get_gallery_summary()
-        
-        identified_tracks = sum(1 for person in self.identification_results.values() if person != "Unknown")
-        total_tracks = len(self.identification_results)
-        
-        return {
-            "gallery_persons": gallery_stats.get("num_persons", 0),
-            "gallery_features": gallery_stats.get("num_persons", 0),  # In simplified system, 1 feature per person
-            "identified_tracks": identified_tracks,
-            "total_tracks": total_tracks,
-            "identification_rate": (identified_tracks / max(total_tracks, 1)) * 100,
-            "persons": gallery_stats.get("person_ids", []),
-            "total_features": gallery_stats.get("num_persons", 0),
-            "avg_features_per_person": 1.0  # Simplified system has 1 feature per person
         }
     
     def _save_debug_visualization(self, frame: np.ndarray, tracking_results: List[Tuple[int, any, float]], frame_count: int) -> None:
@@ -1007,335 +879,326 @@ class PersonTrackingApp:
                 import traceback
                 traceback.print_exc()
     
-    def _process_visualization_queue(self, frame_count: int) -> None:
-        """Process queued visualization tasks in the main thread (thread-safe)"""
-        if not self.enable_gait_parsing:
-            return
-        
-        # Process all queued visualization tasks (non-blocking)
-        processed_count = 0
-        max_per_frame = 5  # Limit processing per frame to avoid blocking
-        
-        while not self.visualization_queue.empty() and processed_count < max_per_frame:
-            try:
-                result = self.visualization_queue.get_nowait()
-                processed_count += 1
-                
-            except queue.Empty:
-                break
-            except Exception as e:
-                if self.config.verbose:
-                    print(f"⚠️  Error processing visualization task: {e}")
-    
-    def get_xgait_sequence_info(self) -> Dict:
-        """Get information about XGait sequence buffering status for all tracks"""
-        sequence_info = {}
-        
-        for track_id in set(list(self.track_silhouettes.keys()) + list(self.track_parsing_masks.keys())):
-            silhouette_count = len(self.track_silhouettes.get(track_id, []))
-            parsing_count = len(self.track_parsing_masks.get(track_id, []))
-            feature_count = len(self.track_gait_features.get(track_id, []))
-            last_extraction = self.track_last_xgait_extraction.get(track_id, 0)
-            
-            sequence_info[track_id] = {
-                'silhouette_frames': silhouette_count,
-                'parsing_frames': parsing_count,
-                'gait_features': feature_count,
-                'sequence_ready': silhouette_count >= self.min_sequence_length,
-                'last_extraction_frame': last_extraction,
-                'sequence_complete': silhouette_count >= self.sequence_buffer_size
-            }
-        return sequence_info
-    
-    def get_xgait_statistics(self) -> Dict:
-        """Get XGait processing statistics for all tracks"""
-        if not self.enable_gait_parsing:
-            return {}
-        
-        total_tracks = len(set(list(self.track_silhouettes.keys()) + list(self.track_parsing_masks.keys())))
-        sequence_ready_tracks = 0
-        tracks_with_features = len(self.track_gait_features)
-        total_sequences = sum(len(sequences) for sequences in self.track_silhouettes.values())
-        
-        # Calculate averages
-        avg_sequence_length = 0
-        if total_tracks > 0:
-            sequence_lengths = [len(sequences) for sequences in self.track_silhouettes.values()]
-            avg_sequence_length = sum(sequence_lengths) / len(sequence_lengths) if sequence_lengths else 0
-            
-            # Count tracks ready for feature extraction
-            for track_id in self.track_silhouettes.keys():
-                if len(self.track_silhouettes[track_id]) >= self.min_sequence_length:
-                    sequence_ready_tracks += 1
-        
-        return {
-            'total_tracks': total_tracks,
-            'sequence_ready_tracks': sequence_ready_tracks,
-            'tracks_with_features': tracks_with_features,
-            'total_sequences': total_sequences,
-            'avg_sequence_length': avg_sequence_length,
-            'min_sequence_length': self.min_sequence_length,
-            'sequence_buffer_size': self.sequence_buffer_size
-        }
-    
-    def save_gallery_and_analyze(self) -> Optional[str]:
-        """Save gallery data and return analysis directory"""
-        if not self.enable_identification or not self.gait_identification:
-            print("⚠️  Gallery analysis not available - identification disabled")
-            return None
-        
-        try:
-            # Save gallery data
-            self.gait_identification._save_gallery()
-            
-            # Get gallery summary
-            summary = self.gait_identification.get_gallery_summary()
-            print(f"📊 Gallery Summary:")
-            print(f"   • Total Persons: {summary['num_persons']}")
-            print(f"   • Person IDs: {summary['person_ids']}")
-            print(f"   • Next Person ID: {summary['next_person_id']}")
-            
-            # Create simple analysis directory
-            analysis_dir = Path("gallery_analysis")
-            analysis_dir.mkdir(exist_ok=True)
-            
-            # Save simple report
-            report_path = analysis_dir / f"simple_gallery_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            with open(report_path, 'w') as f:
-                f.write("Simple Gait Identification Gallery Report\n")
-                f.write("=" * 50 + "\n")
-                f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                f.write(f"Total Persons: {summary['num_persons']}\n")
-                f.write(f"Person IDs: {', '.join(summary['person_ids'])}\n")
-                f.write(f"Similarity Threshold: {summary['similarity_threshold']}\n")
-                f.write(f"Sequence Length: {summary['sequence_length']}\n")
-            
-            print(f"📄 Simple gallery report saved to {report_path}")
-            
-            return str(analysis_dir)
-            
-        except Exception as e:
-            print(f"❌ Error during gallery analysis: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-            
-        except Exception as e:
-            print(f"❌ Error during gallery analysis: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    def get_gallery_stats(self) -> Dict:
-        """Get simplified gallery statistics"""
-        if not self.enable_identification or not self.gait_identification:
-            return {}
-        
-        return self.gait_identification.get_gallery_summary()
-    
-    def run_clustering_analysis(self, save_results: bool = True, show_plot: bool = False) -> Optional[str]:
+    def _generate_comprehensive_analysis(self, total_frames: int):
         """
-        Run comprehensive clustering analysis of embeddings with advanced visualizations
+        Generate comprehensive analysis and visualization of the identification results
         
         Args:
-            save_results: Whether to save analysis results and visualizations
-            show_plot: Whether to display plots (for interactive analysis)
-            
-        Returns:
-            Path to analysis directory if successful
+            total_frames: Total number of frames processed
         """
-        if not self.enable_identification or not self.gait_identification or not self.clustering_analyzer:
-            print("⚠️  Clustering analysis not available - identification or clustering disabled")
-            return None
-        
-        try:
-            print("📊 Starting comprehensive clustering analysis...")
-            
-            # Get gallery embeddings
-            gallery_summary = self.gait_identification.get_gallery_summary()
-            if gallery_summary['num_persons'] == 0:
-                print("⚠️  No persons in gallery - cannot perform clustering analysis")
-                return None
-            
-            # Get gallery embeddings (convert from simplified system)
-            gallery_embeddings = {}
-            if hasattr(self.gait_identification, 'gallery'):
-                gallery_embeddings = self.gait_identification.gallery.copy()
-            
-            # Get track features for analysis - use the same features that identification system uses
-            track_features = {}
-            if hasattr(self.gait_identification, 'track_features'):
-                # Use the features stored in the identification system (these are compatible with gallery)
-                track_features = {
-                    track_id: [features] for track_id, features in self.gait_identification.track_features.items()
-                    if features is not None and features.size > 0
-                }
-            
-            print(f"📊 Analyzing {len(gallery_embeddings)} gallery persons and {len(track_features)} tracks with features")
-            
-            # Run comprehensive clustering analysis
-            analysis_results = self.clustering_analyzer.analyze_gallery_embeddings(
-                gallery=gallery_embeddings,
-                track_features=track_features,
-                save_results=save_results
-            )
-            
-            if analysis_results:
-                print("✅ Clustering analysis completed successfully!")
-                
-                # Print summary
-                print(f"\n📊 Analysis Summary:")
-                print(f"   • Gallery Persons: {analysis_results.get('num_gallery_persons', 0)}")
-                print(f"   • Track Features: {analysis_results.get('num_track_features', 0)}")
-                print(f"   • Embedding Dimension: {analysis_results.get('embedding_dimension', 'Unknown')}")
-                
-                # Print quality assessment
-                if 'quality' in analysis_results and 'quality_assessment' in analysis_results['quality']:
-                    quality = analysis_results['quality']['quality_assessment']
-                    print(f"   • Overall Quality: {quality.get('assessment', 'Unknown')} ({quality.get('overall_score', 0):.2f})")
-                    if 'quality_factors' in quality:
-                        print(f"   • Quality Factors: {', '.join(quality['quality_factors'])}")
-                
-                # Print clustering results
-                if 'clustering' in analysis_results:
-                    clustering = analysis_results['clustering']
-                    print(f"\n🎯 Clustering Results:")
-                    
-                    if 'kmeans' in clustering and 'optimal_k' in clustering['kmeans']:
-                        print(f"   • K-means optimal clusters: {clustering['kmeans']['optimal_k']}")
-                        print(f"   • K-means silhouette score: {clustering['kmeans'].get('best_silhouette_score', 0):.3f}")
-                    
-                    if 'dbscan' in clustering and 'n_clusters' in clustering['dbscan']:
-                        print(f"   • DBSCAN clusters: {clustering['dbscan']['n_clusters']}")
-                        print(f"   • DBSCAN noise points: {clustering['dbscan'].get('n_noise_points', 0)}")
-                        print(f"   • DBSCAN silhouette score: {clustering['dbscan'].get('silhouette_score', 0):.3f}")
-                    
-                    if 'hierarchical' in clustering and 'optimal_clusters' in clustering['hierarchical']:
-                        print(f"   • Hierarchical clusters: {clustering['hierarchical']['optimal_clusters']}")
-                        print(f"   • Hierarchical silhouette score: {clustering['hierarchical'].get('silhouette_score', 0):.3f}")
-                
-                # Print dimensionality reduction results
-                if 'dimensionality_reduction' in analysis_results:
-                    dim_red = analysis_results['dimensionality_reduction']
-                    print(f"\n🔍 Dimensionality Reduction:")
-                    
-                    if 'pca' in dim_red and 'total_variance_10_components' in dim_red['pca']:
-                        print(f"   • PCA: {dim_red['pca']['total_variance_10_components']:.1%} variance in 10 components")
-                    
-                    if 'tsne' in dim_red and 'kl_divergence' in dim_red['tsne']:
-                        print(f"   • t-SNE: KL divergence = {dim_red['tsne']['kl_divergence']:.3f}")
-                
-                # Print visualization paths
-                if 'visualizations' in analysis_results:
-                    print(f"\n🎨 Visualizations saved:")
-                    for viz_type, path in analysis_results['visualizations'].items():
-                        if path and viz_type != 'error':
-                            print(f"   • {viz_type}: {path}")
-                
-                # Return analysis directory
-                if 'report_path' in analysis_results:
-                    analysis_dir = str(Path(analysis_results['report_path']).parent)
-                    print(f"\n📁 Full analysis available in: {analysis_dir}")
-                    return analysis_dir
-                else:
-                    return str(self.clustering_analyzer.output_dir)
-            
-            else:
-                print("❌ Clustering analysis failed - no results returned")
-                return None
-            
-        except Exception as e:
-            print(f"❌ Error during clustering analysis: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-            
-            return None
-            
-        except Exception as e:
-            print(f"❌ Error during clustering analysis: {e}")
-            return None
-    
-    def analyze_feature_separability(self) -> Dict:
-        """Simplified feature separability analysis"""
-        if not self.enable_identification or not self.gait_identification:
-            return {'error': 'Gallery analysis not available'}
-        
-        summary = self.gait_identification.get_gallery_summary()
-        return {
-            'num_persons': summary['num_persons'],
-            'person_ids': summary['person_ids'],
-            'separability_score': 1.0,  # Simplified - assume good separability
-            'quality_assessment': {'overall': 'Good (simplified)'},
-            'note': 'Detailed separability analysis removed in simplified version'
-        }
-    
-    def check_xgait_utilization(self):
-        """Check and report how well XGait model is being utilized"""
-        if not self.enable_gait_parsing or not self.xgait_model:
-            print("❌ XGait model not available - GaitParsing disabled")
+        if not self.gallery_manager or not self.embedding_visualizer:
+            print("⚠️  Gallery manager or visualizer not available for analysis")
             return
         
-        # Get utilization report from XGait model
-        report = self.xgait_model.get_model_utilization_report()
+        print("\n" + "=" * 60)
+        print("🎯 GENERATING COMPREHENSIVE IDENTIFICATION ANALYSIS")
+        print("=" * 60)
         
-        print("\n🎯 XGait Model Utilization Report:")
-        print("=" * 50)
+        # Get gallery statistics
+        gallery_stats = self.gallery_manager.get_gallery_summary()
+        print(f"\n📊 Final Gallery Statistics:")
+        print(f"   • Total identities created: {gallery_stats['num_identities']}")
+        print(f"   • Total embeddings processed: {gallery_stats['total_embeddings_processed']}")
+        print(f"   • Collision avoidance events: {gallery_stats['collision_avoided_count']}")
+        print(f"   • Identity updates performed: {gallery_stats['identity_updates_count']}")
+        print(f"   • Average embeddings per track: {gallery_stats['average_embeddings_per_track']:.2f}")
         
-        # Model status
-        status_icon = "✅" if report['model_loaded'] else "❌"
-        print(f"{status_icon} Model weights loaded: {report['model_loaded']}")
+        # Identity quality analysis
+        quality_scores = gallery_stats.get('gallery_quality_scores', {})
+        if quality_scores:
+            avg_quality = np.mean(list(quality_scores.values()))
+            print(f"   • Average identity quality: {avg_quality:.3f}")
+            print(f"   • Quality range: {min(quality_scores.values()):.3f} - {max(quality_scores.values()):.3f}")
         
-        # Input configuration
-        print(f"📐 Input size: {report['input_size_optimized']}")
-        print(f"⏱️  Sequence length: {report['target_sequence_length']} frames (min: {report['min_sequence_length']})")
+        # Print identity assignments
+        print(f"\n🏷️  Identity Assignments:")
+        if hasattr(self, 'track_identities'):
+            for track_id, identity_info in self.track_identities.items():
+                print(f"   Track {track_id:2d} -> {identity_info['identity']} "
+                      f"(conf: {identity_info['confidence']:.3f}, "
+                      f"new: {identity_info['is_new']}, "
+                      f"frame: {identity_info['frame_assigned']})")
         
-        # Gallery status
-        gallery_icon = "✅" if report['gallery_active'] else "⚠️"
-        print(f"{gallery_icon} Gallery manager: {report['gallery_active']}")
+        # Frame-level collision analysis
+        frame_collision_stats = self._analyze_frame_collisions()
+        if frame_collision_stats['total_collision_frames'] > 0:
+            print(f"\n🚫 Collision Avoidance Analysis:")
+            print(f"   • Frames with multiple tracks: {frame_collision_stats['total_collision_frames']}")
+            print(f"   • Maximum tracks in single frame: {frame_collision_stats['max_tracks_per_frame']}")
+            print(f"   • Collision avoidance rate: {frame_collision_stats['avoidance_rate']:.1f}%")
         
-        # Cross-granularity alignment capabilities
-        print("\n🔧 Cross-Granularity Alignment Capabilities:")
-        if 'performance_potential' in report and 'cross_granularity_alignment' in report['performance_potential']:
-            print(f"   • Architecture: {report['performance_potential']['cross_granularity_alignment']}")
+        # Save gallery state
+        try:
+            gallery_state_path = self.visualization_output_dir / f"gallery_state.json"
+            self.gallery_manager.save_gallery_state(str(gallery_state_path))
+            
+            # Export embeddings for external analysis
+            export_dir = self.visualization_output_dir / f"embeddings_export"
+            self.gallery_manager.export_embeddings_for_analysis(str(export_dir))
+            
+            print(f"\n💾 Data Export:")
+            print(f"   • Gallery state: {gallery_state_path}")
+            print(f"   • Embeddings export: {export_dir}")
+            
+        except Exception as e:
+            print(f"⚠️  Error saving gallery state: {e}")
+        
+        # Generate visualizations
+        try:
+            print(f"\n🎨 Generating Embedding Visualizations...")
+            
+            # Create timestamped visualization directory
+            viz_dir = self.visualization_output_dir / f"visualizations"
+            
+            # Generate comprehensive visualization report
+            viz_report = self.embedding_visualizer.create_comprehensive_report(
+                gallery_manager=self.gallery_manager,
+                output_dir=str(viz_dir),
+                methods=["pca", "tsne", "umap"]
+            )
+            
+            print(f"✅ Visualizations completed:")
+            print(f"   • Output directory: {viz_dir}")
+            print(f"   • Total visualizations: {viz_report['total_visualizations_created']}")
+            print(f"   • Methods used: {', '.join(viz_report['visualization_methods'])}")
+            
+            # Create summary visualization showing key insights
+            self._create_summary_dashboard(viz_dir, gallery_stats, frame_collision_stats, quality_scores)
+            
+        except Exception as e:
+            print(f"⚠️  Error generating visualizations: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Performance analysis
+        self._print_performance_analysis(total_frames, gallery_stats)
+        
+        print("\n" + "=" * 60)
+        print("🎉 COMPREHENSIVE ANALYSIS COMPLETED")
+        print("=" * 60)
+    
+    def _analyze_frame_collisions(self) -> Dict:
+        """Analyze frame-level collision statistics"""
+        if not self.gallery_manager:
+            return {'total_collision_frames': 0, 'max_tracks_per_frame': 0, 'avoidance_rate': 0.0}
+        
+        frame_assignments = self.gallery_manager.frame_assignments
+        collision_frames = 0
+        max_tracks = 0
+        total_assignments = 0
+        
+        for frame_num, assignments in frame_assignments.items():
+            num_tracks = len(assignments)
+            total_assignments += num_tracks
+            max_tracks = max(max_tracks, num_tracks)
+            
+            if num_tracks > 1:
+                collision_frames += 1
+        
+        # Calculate avoidance rate (percentage of successful collision avoidance)
+        avoidance_rate = (self.gallery_manager.collision_avoided_count / 
+                         max(total_assignments, 1)) * 100
+        
+        return {
+            'total_collision_frames': collision_frames,
+            'max_tracks_per_frame': max_tracks,
+            'avoidance_rate': avoidance_rate,
+            'total_assignments': total_assignments
+        }
+    
+    def _create_summary_dashboard(self, output_dir: Path, gallery_stats: Dict, 
+                                collision_stats: Dict, quality_scores: Dict):
+        """Create a summary dashboard with key metrics"""
+        try:
+            import matplotlib.pyplot as plt
+            
+            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+            
+            # 1. Identity distribution
+            if quality_scores:
+                identities = list(quality_scores.keys())
+                qualities = list(quality_scores.values())
+                
+                ax1.bar(range(len(identities)), qualities, color='skyblue')
+                ax1.set_xlabel('Identity')
+                ax1.set_ylabel('Quality Score')
+                ax1.set_title('Identity Quality Distribution')
+                ax1.set_xticks(range(len(identities)))
+                ax1.set_xticklabels([id.replace('Person_', 'P') for id in identities], rotation=45)
+                ax1.grid(True, alpha=0.3)
+            
+            # 2. Gallery growth over time
+            embeddings_data = []
+            if hasattr(self, 'track_identities'):
+                for track_id, info in self.track_identities.items():
+                    embeddings_data.append(info['frame_assigned'])
+                
+                if embeddings_data:
+                    ax2.hist(embeddings_data, bins=min(20, len(embeddings_data)), 
+                            alpha=0.7, color='lightgreen')
+                    ax2.set_xlabel('Frame Number')
+                    ax2.set_ylabel('Identity Assignments')
+                    ax2.set_title('Identity Assignment Timeline')
+                    ax2.grid(True, alpha=0.3)
+            
+            # 3. Collision avoidance metrics
+            collision_labels = ['Successful\nAvoidance', 'No Collision\nNeeded']
+            collision_values = [
+                gallery_stats.get('collision_avoided_count', 0),
+                gallery_stats.get('total_embeddings_processed', 0) - gallery_stats.get('collision_avoided_count', 0)
+            ]
+            
+            colors = ['lightcoral', 'lightblue']
+            ax3.pie(collision_values, labels=collision_labels, colors=colors, autopct='%1.1f%%')
+            ax3.set_title('Collision Avoidance Success Rate')
+            
+            # 4. Processing statistics
+            stats_labels = ['Identities', 'Tracks', 'Embeddings\n(÷10)', 'Updates']
+            stats_values = [
+                gallery_stats.get('num_identities', 0),
+                gallery_stats.get('total_tracks', 0),
+                gallery_stats.get('total_embeddings_processed', 0) // 10,  # Scale down for visibility
+                gallery_stats.get('identity_updates_count', 0)
+            ]
+            
+            ax4.bar(stats_labels, stats_values, color=['gold', 'orange', 'lightpink', 'lightsteelblue'])
+            ax4.set_ylabel('Count')
+            ax4.set_title('Processing Statistics Summary')
+            ax4.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig(output_dir / 'summary_dashboard.png', dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            print(f"   • Summary dashboard: summary_dashboard.png")
+            
+        except Exception as e:
+            print(f"⚠️  Error creating summary dashboard: {e}")
+    
+    def _print_performance_analysis(self, total_frames: int, gallery_stats: Dict):
+        """Print performance analysis"""
+        print(f"\n⚡ Performance Analysis:")
+        
+        if total_frames > 0:
+            embeddings_per_frame = gallery_stats.get('total_embeddings_processed', 0) / total_frames
+            print(f"   • Embeddings per frame: {embeddings_per_frame:.2f}")
+            
+            identities_per_frame = gallery_stats.get('num_identities', 0) / total_frames
+            print(f"   • New identities per frame: {identities_per_frame:.3f}")
+        
+        # Gallery efficiency
+        total_embeddings = gallery_stats.get('total_embeddings_processed', 0)
+        total_identities = gallery_stats.get('num_identities', 0)
+        if total_identities > 0:
+            embeddings_per_identity = total_embeddings / total_identities
+            print(f"   • Embeddings per identity: {embeddings_per_identity:.1f}")
+        
+        # Update efficiency
+        updates = gallery_stats.get('identity_updates_count', 0)
+        if total_embeddings > 0:
+            update_rate = updates / total_embeddings * 100
+            print(f"   • Identity update rate: {update_rate:.1f}%")
+        
+        # Memory efficiency
+        avg_embeddings_per_track = gallery_stats.get('average_embeddings_per_track', 0)
+        print(f"   • Average embeddings per track: {avg_embeddings_per_track:.1f}")
+        
+        # Success metrics
+        collision_avoidance = gallery_stats.get('collision_avoided_count', 0)
+        if collision_avoidance > 0:
+            print(f"   • Collision avoidance events: {collision_avoidance}")
+            print(f"   • System robustness: HIGH ✅")
         else:
-            print("   • Status: Official XGait implementation active")
+            print(f"   • System robustness: MODERATE ⚠️")
+    
+    def _perform_track_consolidation(self):
+        """Perform track consolidation to reduce fragmentation"""
+        if not self.gallery_manager:
+            return
         
-        # Performance potential
-        print(f"\n📈 Performance Potential:")
-        for metric, value in report['performance_potential'].items():
-            print(f"   • {metric}: {value}")
+        print("\n" + "=" * 60)
+        print("🔄 PERFORMING TRACK CONSOLIDATION ANALYSIS")
+        print("=" * 60)
         
-        # Recommendations
-        if report['recommendations']:
-            print(f"\n💡 Recommendations:")
-            for rec in report['recommendations']:
-                print(f"   {rec}")
+        # Analyze fragmentation before consolidation
+        fragmentation_analysis = self.gallery_manager.analyze_track_fragmentation()
         
-        # Current utilization status
-        if hasattr(self, 'gait_identification') and self.gait_identification:
-            gallery_stats = self.gait_identification.get_gallery_summary()
-            print(f"\n📚 Current Gallery Status:")
-            print(f"   • Registered persons: {gallery_stats.get('num_persons', 0)}")
-            print(f"   • Person IDs: {gallery_stats.get('person_ids', [])}")
+        print(f"\n📊 Pre-Consolidation Analysis:")
+        print(f"   • Total tracks created: {fragmentation_analysis['total_tracks']}")
+        print(f"   • Total identities: {fragmentation_analysis['total_identities']}")
+        print(f"   • Average tracks per identity: {fragmentation_analysis['avg_tracks_per_identity']:.1f}")
+        print(f"   • Estimated actual people: {fragmentation_analysis['estimated_actual_people']}")
+        print(f"   • Fragmentation ratio: {fragmentation_analysis['fragmentation_ratio']:.2f}")
         
-        print("=" * 50)
-        
-        # Check if we're using dual input
-        dual_input_available = (self.silhouette_extractor and 
-                               self.parsing_model and 
-                               self.silhouette_extractor.is_model_loaded() and
-                               self.parsing_model.is_model_loaded())
-        
-        if dual_input_available:
-            print("🚀 DUAL INPUT READY: Silhouettes + Parsing for maximum XGait performance!")
+        if fragmentation_analysis['is_fragmented']:
+            print(f"   ⚠️  High fragmentation detected (ratio > 1.5)")
+            print(f"   🔄 Running consolidation...")
+            
+            # Perform consolidation with more aggressive threshold
+            consolidation_map = self.gallery_manager.consolidate_fragmented_tracks(
+                consolidation_threshold=0.55  # More aggressive consolidation threshold
+            )
+            
+            # Analyze after consolidation
+            post_analysis = self.gallery_manager.analyze_track_fragmentation()
+            
+            print(f"\n📊 Post-Consolidation Analysis:")
+            print(f"   • Final identities: {post_analysis['total_identities']}")
+            print(f"   • Identities removed: {fragmentation_analysis['total_identities'] - post_analysis['total_identities']}")
+            print(f"   • New fragmentation ratio: {post_analysis['fragmentation_ratio']:.2f}")
+            print(f"   • Improvement: {fragmentation_analysis['fragmentation_ratio'] - post_analysis['fragmentation_ratio']:.2f}")
+            
+            # Show consolidation results
+            if consolidation_map:
+                print(f"\n🔗 Consolidation Results:")
+                for identity, tracks in consolidation_map.items():
+                    print(f"   {identity}: merged tracks {sorted(tracks)}")
+            
+            # Update our local tracking data
+            if hasattr(self, 'track_identities'):
+                self._update_local_identities_after_consolidation(consolidation_map)
+            
         else:
-            print("⚠️  SINGLE INPUT ONLY: Missing silhouette/parsing models - reduced XGait performance")
+            print(f"   ✅ Low fragmentation - no consolidation needed")
         
-        return report
+        print("\n" + "=" * 60)
+        print("✅ TRACK CONSOLIDATION COMPLETED")
+        print("=" * 60)
+    
+    def _update_local_identities_after_consolidation(self, consolidation_map: Dict[str, List[int]]):
+        """Update local track identity mappings after consolidation"""
+        # Create reverse mapping: track_id -> final_identity
+        if not consolidation_map:
+            return
+        
+        track_to_final_identity = {}
+        for final_identity, track_list in consolidation_map.items():
+            for track_id in track_list:
+                track_to_final_identity[track_id] = final_identity
+        
+        # Update track_identities
+        updated_count = 0
+        for track_id, identity_info in self.track_identities.items():
+            if track_id in track_to_final_identity:
+                old_identity = identity_info['identity']
+                new_identity = track_to_final_identity[track_id]
+                if old_identity != new_identity:
+                    identity_info['identity'] = new_identity
+                    identity_info['consolidated'] = True
+                    updated_count += 1
+        
+        if updated_count > 0:
+            print(f"   📝 Updated {updated_count} local track identity mappings")
+    
+    def get_is_new_identity_dict(self) -> dict:
+        """
+        Returns a dictionary mapping track_id to True (if new identity) or False (if from gallery)
+        for all currently tracked identities.
+        """
+        is_new_identity = {}
+        if hasattr(self, 'track_identities'):
+            for track_id, info in self.track_identities.items():
+                is_new_identity[track_id] = info.get('is_new', False)
+        return is_new_identity
 
-    # Backward compatibility alias
-    def run_pca_analysis(self, save_path: Optional[str] = None, show_plot: bool = False) -> Optional[str]:
-        """
-        Backward compatibility alias for run_clustering_analysis
-        """
-        return self.run_clustering_analysis(save_path=save_path, show_plot=show_plot)
+

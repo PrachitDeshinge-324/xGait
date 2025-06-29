@@ -129,10 +129,32 @@ class XGaitAdapter:
         """Set the gallery manager for person identification"""
         self.gallery_manager = gallery_manager
     
+    def process_track_embedding(self, track_id: int, features: np.ndarray, frame_number: int, 
+                              sequence_quality: float = None) -> Tuple[Optional[str], float, bool]:
+        """
+        Process a track embedding for identification with collision avoidance
+        
+        Args:
+            track_id: Track ID
+            features: XGait embedding features
+            frame_number: Frame number where embedding was extracted
+            sequence_quality: Quality of the gait sequence
+            
+        Returns:
+            Tuple of (assigned_identity, confidence, is_new_identity)
+        """
+        if self.gallery_manager and features.size > 0:
+            return self.gallery_manager.process_track_embedding(
+                track_id, features, frame_number, sequence_quality
+            )
+        return None, 0.0, False
+    
     def add_to_gallery(self, person_id: str, features: np.ndarray, track_id: Optional[int] = None):
-        """Add person features to the gallery"""
+        """Add person features to the gallery (legacy method)"""
         if self.gallery_manager:
-            self.gallery_manager.add_person_features(person_id, features, track_id)
+            # This is a legacy method - use process_track_embedding instead
+            logger.warning("Using legacy add_to_gallery method - consider using process_track_embedding")
+            self.gallery_manager.process_track_embedding(track_id or -1, features, 0)
     
     def identify_person(self, query_features: np.ndarray, track_id: Optional[int] = None) -> Tuple[Optional[str], float, Dict]:
         """Identify a person using XGait features"""
@@ -150,6 +172,18 @@ class XGaitAdapter:
         if self.gallery_manager:
             return self.gallery_manager.get_gallery_summary()
         return {'num_persons': 0, 'person_ids': [], 'total_features': 0}
+    
+    def get_all_embeddings(self):
+        """Get all embeddings for visualization"""
+        if self.gallery_manager:
+            return self.gallery_manager.get_all_embeddings()
+        return []
+    
+    def get_track_embeddings_by_track(self):
+        """Get embeddings organized by track"""
+        if self.gallery_manager:
+            return self.gallery_manager.get_track_embeddings_by_track()
+        return {}
     
     def is_model_loaded(self) -> bool:
         """Check if model weights are loaded"""

@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 """
-Person Tracking and Identification Application
-A comprehensive person tracking system with GaitParsing and ReID capabilities
+Person Tracking Application with XGait Feature Extraction
+A comprehensive person tracking system with GaitParsing capabilities
 
 Features:
 - Real-time person detection and tracking using YOLO
 - GaitParsing pipeline (silhouette extraction, human parsing, XGait features)
-- Person re-identification using TransReID
 - Parallel processing for optimal performance
 - Debug visualization and analysis tools
-- Configurable identification gallery management
 
 Usage:
     python main.py --input video.mp4                    # Basic tracking
     python main.py --input video.mp4 --enable-gait      # With GaitParsing
-    python main.py --input video.mp4 --enable-id        # With identification
-    python main.py --input video.mp4 --enable-all       # Full pipeline
 """
 
 import argparse
@@ -33,14 +29,12 @@ from track_persons import PersonTrackingApp
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="Person Tracking and Identification Application",
+        description="Person Tracking Application with XGait Feature Extraction",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s --input video.mp4                           # Basic tracking only
   %(prog)s --input video.mp4 --enable-gait            # With GaitParsing
-  %(prog)s --input video.mp4 --enable-identification  # With person ID
-  %(prog)s --input video.mp4 --enable-all             # Full pipeline
   %(prog)s --input video.mp4 --no-display             # Headless mode
         """
     )
@@ -58,10 +52,6 @@ Examples:
     # Features
     parser.add_argument('--enable-gait', action='store_true',
                       help='Enable GaitParsing pipeline (silhouette, parsing, XGait)')
-    parser.add_argument('--enable-identification', '--enable-id', action='store_true',
-                      help='Enable person re-identification')
-    parser.add_argument('--enable-all', action='store_true',
-                      help='Enable all features (GaitParsing + Identification)')
     
     # Display and Debug
     parser.add_argument('--no-display', action='store_true',
@@ -77,45 +67,38 @@ Examples:
     parser.add_argument('--max-frames', type=int,
                       help='Maximum number of frames to process (for testing)')
     
-    # Model paths (optional overrides)
-    parser.add_argument('--yolo-model', 
-                      help='Path to YOLO model (default: weights/yolo11m.pt)')
-    parser.add_argument('--reid-model',
-                      help='Path to ReID model (default: weights/transreid_vitbase.pth)')
-    parser.add_argument('--gait-model',
-                      help='Path to XGait model (default: weights/Gait3D-XGait-120000.pt)')
+    # Model overrides
+    parser.add_argument('--yolo-model', help='Override YOLO model path')
+    parser.add_argument('--reid-model', help='Override ReID model path')
+    parser.add_argument('--gait-model', help='Override XGait model path')
     
     return parser.parse_args()
 
 
 def configure_system(args):
-    """Configure system based on command line arguments"""
+    """Configure system based on arguments"""
     config = SystemConfig()
     
-    # Video configuration
+    # Update paths
     config.video.input_path = args.input
     config.video.display_window = not args.no_display
-    if args.max_frames:
-        config.video.max_frames = args.max_frames
+    config.video.save_annotated_video = args.save_video or bool(args.output_video)
     
-    # Video saving configuration
-    if args.save_video or args.output_video:
-        config.video.save_annotated_video = True
-        if args.output_video:
-            config.video.output_video_path = args.output_video
+    if args.output_video:
+        config.video.output_video_path = args.output_video
+    elif args.save_video:
+        # Auto-generate output name
+        input_path = Path(args.input)
+        output_name = f"{input_path.stem}_annotated{input_path.suffix}"
+        if args.output:
+            output_dir = Path(args.output)
+            output_dir.mkdir(exist_ok=True)
+            config.video.output_video_path = str(output_dir / output_name)
         else:
-            # Auto-generate output path
-            input_path = Path(args.input)
-            output_name = f"{input_path.stem}_annotated{input_path.suffix}"
             config.video.output_video_path = str(input_path.parent / output_name)
     
     # Feature flags
-    if args.enable_all:
-        enable_gait = True
-        enable_identification = True
-    else:
-        enable_gait = args.enable_gait
-        enable_identification = args.enable_identification
+    enable_gait = args.enable_gait
     
     # Debug configuration
     config.verbose = args.debug
@@ -133,7 +116,7 @@ def configure_system(args):
     if args.gait_model:
         config.model.xgait_model_path = args.gait_model
         
-    return config, enable_gait, enable_identification
+    return config, enable_gait
 
 
 def main():
@@ -141,7 +124,7 @@ def main():
     try:
         # Parse arguments and configure system
         args = parse_arguments()
-        config, enable_gait, enable_identification = configure_system(args)
+        config, enable_gait = configure_system(args)
         
         # Validate input file
         input_path = Path(args.input)
@@ -150,13 +133,12 @@ def main():
             return 1
         
         # Print configuration
-        print("🚀 Person Tracking and Identification Application")
+        print("🚀 Person Tracking Application with XGait Feature Extraction")
         print("=" * 60)
         print(f"📹 Input: {input_path}")
         print(f"🔧 Device: {config.model.device}")
         print(f"👁️  Display: {'Enabled' if config.video.display_window else 'Disabled (headless)'}")
         print(f"🚶 GaitParsing: {'Enabled' if enable_gait else 'Disabled'}")
-        print(f"🔍 Identification: {'Enabled' if enable_identification else 'Disabled'}")
         print(f"🐛 Debug mode: {'Enabled' if config.debug_mode else 'Disabled'}")
         if config.video.max_frames:
             print(f"🎬 Max frames: {config.video.max_frames} (testing mode)")
@@ -165,7 +147,7 @@ def main():
         # Initialize and run application
         app = PersonTrackingApp(
             config=config,
-            enable_identification=enable_identification,
+            enable_identification=False,
             enable_gait_parsing=enable_gait
         )
         
@@ -187,61 +169,7 @@ def main():
                 if config.debug_mode:
                     print(f"   • Debug images saved: {gait_stats['debug_images_saved']}")
         
-        if enable_identification:
-            id_stats = app.get_identification_stats()
-            if id_stats:
-                print(f"🔍 Identification Results:")
-                print(f"   • Gallery persons: {id_stats.get('gallery_persons', 0)}")
-                print(f"   • Identified tracks: {id_stats.get('identified_tracks', 0)}")
-                print(f"   • Total tracks: {id_stats.get('total_tracks', 0)}")
-                print(f"   • Identification rate: {id_stats.get('identification_rate', 0):.1f}%")
-            
-            # Generate simplified gallery analysis
-            print(f"\n🎯 Gallery Analysis:")
-            print("-" * 40)
-            try:
-                analysis_dir = app.save_gallery_and_analyze()
-                if analysis_dir:
-                    print(f"   📁 Analysis saved to: {analysis_dir}")
-                
-                # Run simplified separability analysis
-                separability = app.analyze_feature_separability()
-                if 'error' not in separability:
-                    print(f"   🎯 Separability Score: {separability['separability_score']:.3f}")
-                    print(f"   📈 Quality Assessment: {separability['quality_assessment']['overall']}")
-                
-                # Run comprehensive clustering analysis with visualizations
-                print(f"   📊 Running comprehensive clustering analysis...")
-                clustering_dir = app.run_clustering_analysis(save_results=True, show_plot=False)
-                if clustering_dir:
-                    print(f"   📊 Clustering analysis saved to: {clustering_dir}")
-                else:
-                    print(f"   ⚠️  Clustering analysis skipped (no embeddings available)")
-                
-                # Also save basic clustering report for backward compatibility
-                clustering_path = "final_clustering_analysis.txt"
-                with open(clustering_path, 'w') as f:
-                    f.write("Comprehensive Gait Identification Analysis\n")
-                    f.write("=" * 50 + "\n")
-                    f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-                    
-                    gallery_stats = app.get_gallery_stats()
-                    f.write(f"Gallery Statistics:\n")
-                    f.write(f"  Total Persons: {gallery_stats.get('num_persons', 0)}\n")
-                    f.write(f"  Person IDs: {', '.join(gallery_stats.get('person_ids', []))}\n\n")
-                    
-                    if clustering_dir:
-                        f.write(f"Detailed clustering analysis available in: {clustering_dir}\n")
-                        f.write("See visualization files and JSON report for comprehensive results.\n")
-                    else:
-                        f.write("No clustering analysis performed (insufficient data).\n")
-                
-                print(f"   📊 Final clustering report: {clustering_path}")
-                
-            except Exception as e:
-                print(f"   ⚠️  Gallery analysis failed: {e}")
-        
-        print("✅ Processing completed successfully!")
+        print("\n✅ Application completed successfully!")
         return 0
         
     except KeyboardInterrupt:

@@ -48,7 +48,12 @@ class TrackingVisualizer:
                             identification_results: Dict = None,
                             identification_confidence: Dict = None,
                             gallery_stats: Dict = None,
-                            identification_stats: Dict = None) -> np.ndarray:
+                            identification_stats: Dict = None,
+                            current_fps: float = None,
+                            avg_fps: float = None,
+                            is_new_identity: Dict[int, bool] = None ,
+                            gallery_loaded: bool = False
+                            ) -> np.ndarray:
         """
         Draw modern, minimal tracking annotations
         
@@ -70,27 +75,40 @@ class TrackingVisualizer:
         for track_id, box, conf in tracking_results:
             x1, y1, x2, y2 = box.astype(int)
             center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
-            
+
             # Get track color and status
             is_stable = track_id in stable_tracks
             color = self.get_track_color(track_id, conf)
-            
+
+            # Determine if new or from gallery
+            is_new = False
+            if is_new_identity and track_id in is_new_identity:
+                is_new = is_new_identity[track_id]
+
+            # Change border color for new/gallery
+            border_color = (0, 255, 0) if is_new else (0, 122, 255)  # Green for new, Blue for gallery
+
             # Modern bounding box with rounded corners effect
-            self._draw_modern_bbox(annotated_frame, (x1, y1, x2, y2), color, is_stable)
-            
+            self._draw_modern_bbox(annotated_frame, (x1, y1, x2, y2), border_color, is_stable)
+
             # Track ID badge - minimal design
             self._draw_track_badge(annotated_frame, track_id, (x1, y1), color)
-            
+
             # Person identification label (if available)
             if identification_results and track_id in identification_results:
                 person_id = identification_results[track_id]
                 id_conf = identification_confidence.get(track_id, 0.0)
                 if person_id != "Unknown":
                     self._draw_person_label(annotated_frame, person_id, id_conf, (x1, y2), color)
-        
+                    # Add NEW/GALLERY label
+                    label_text = "NEW" if is_new else "GALLERY"
+                    label_color = (0, 255, 0) if is_new else (0, 122, 255)
+                    cv2.putText(annotated_frame, label_text, (x1, y2 + 25),
+                                self.font, 0.6, label_color, 2)
+
         # Modern status overlay - minimal and clean
         self._draw_modern_status(annotated_frame, len(tracking_results), frame_count, w, h,
-                                gallery_stats, identification_stats)
+                                gallery_stats, identification_stats, current_fps, avg_fps,gallery_loaded= gallery_loaded)
         
         return annotated_frame
     
@@ -182,11 +200,21 @@ class TrackingVisualizer:
     
     def _draw_modern_status(self, frame: np.ndarray, active_tracks: int, 
                            frame_count: int, width: int, height: int,
-                           gallery_stats: dict = None, identification_stats: dict = None):
-        """Draw minimal status overlay with optional identification info"""
+                           gallery_stats: dict = None, identification_stats: dict = None,
+                           current_fps: float = None, avg_fps: float = None,gallery_loaded: bool = False):
+        """Draw minimal status overlay with optional identification info and FPS"""
         # Build status text
         status_lines = [f"Frame {frame_count} • {active_tracks} tracked"]
-        
+        if gallery_loaded:
+            status_lines.append("Gallery loaded")
+        else:
+            status_lines.append("Gallery not loaded")
+        if current_fps is not None and avg_fps is not None:
+            status_lines.append(f"FPS: {current_fps:.1f} (avg: {avg_fps:.1f})")
+        elif current_fps is not None:
+            status_lines.append(f"FPS: {current_fps:.1f}")
+        elif avg_fps is not None:
+            status_lines.append(f"Avg FPS: {avg_fps:.1f}")
         # Add identification stats if available
         if identification_stats:
             identified = identification_stats.get('identified_tracks', 0)
@@ -255,7 +283,9 @@ class TrackingVisualizer:
                             track_history: Dict,
                             stable_tracks: Set[int],
                             frame_count: int,
-                            max_track_id: int) -> np.ndarray:
+                            max_track_id: int,
+                            current_fps: float = None,
+                            avg_fps: float = None) -> np.ndarray:
         """
         Draw tracking results on frame (legacy method for compatibility)
         
@@ -302,7 +332,7 @@ class TrackingVisualizer:
             cv2.circle(annotated_frame, (center_x, center_y), 8, dot_color, -1)
         
         # Add information overlay
-        self._draw_info_overlay(annotated_frame, len(tracking_results), max_track_id, frame_count)
+        self._draw_info_overlay(annotated_frame, len(tracking_results), max_track_id, frame_count, current_fps, avg_fps)
         
         return annotated_frame
     
@@ -310,14 +340,21 @@ class TrackingVisualizer:
                           frame: np.ndarray, 
                           active_tracks: int, 
                           max_track_id: int, 
-                          frame_count: int) -> None:
-        """Draw information overlay on frame"""
+                          frame_count: int,
+                          current_fps: float = None,
+                          avg_fps: float = None) -> None:
+        """Draw information overlay on frame with FPS info"""
         
         info_lines = [
             f"Frame: {frame_count} | Active: {active_tracks} | Max ID: {max_track_id}",
             "Method: TransReID Model + Appearance Matching"
         ]
-        
+        if current_fps is not None and avg_fps is not None:
+            info_lines.append(f"FPS: {current_fps:.1f} (avg: {avg_fps:.1f})")
+        elif current_fps is not None:
+            info_lines.append(f"FPS: {current_fps:.1f}")
+        elif avg_fps is not None:
+            info_lines.append(f"Avg FPS: {avg_fps:.1f}")
         for i, line in enumerate(info_lines):
             color = (0, 255, 255) if i == 0 else (255, 255, 255)
             weight = 2

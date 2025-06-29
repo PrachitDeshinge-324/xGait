@@ -12,4 +12,8 @@ find . -type d -name ".cache" -exec rm -rf {} +
 # Clear Jupyter Notebook checkpoints (if any)
 find . -type d -name ".ipynb_checkpoints" -exec rm -rf {} +
 
+rm -rf visualization_analysis debug_gait_parsing
+
 echo "All cache cleared."
+
+clear 
