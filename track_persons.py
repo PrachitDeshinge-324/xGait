@@ -40,6 +40,7 @@ from src.utils.visualization import TrackingVisualizer, VideoWriter
 from src.models.silhouette_model import SilhouetteExtractor
 from src.models.parsing_model import HumanParsingModel
 from src.models.xgait_model import create_xgait_inference
+from src.utils.simple_identity_gallery import SimpleIdentityGallery
 
 class PersonTrackingApp:
     """
@@ -134,6 +135,12 @@ class PersonTrackingApp:
         self.sequence_buffer_size = xgaitConfig.sequence_buffer_size  # Number of frames to keep for XGait sequence analysis
         self.min_sequence_length = xgaitConfig.min_sequence_length   # Minimum frames needed for XGait extraction
         self.xgait_extraction_interval = xgaitConfig.xgait_extraction_interval  # Extract XGait features every N frames per track
+        
+        # --- Simple Identity Gallery ---
+        self.simple_gallery = SimpleIdentityGallery(similarity_threshold=0.45)
+        self.track_embedding_buffer = defaultdict(list)  # track_id -> list of embeddings
+        self.track_quality_buffer = defaultdict(list)    # track_id -> list of qualities
+        self.track_to_person = {}  # track_id -> person_name
         
         print(f"🚀 Person Tracking App initialized")
         print(f"   Video: {config.video.input_path}")
@@ -269,14 +276,13 @@ class PersonTrackingApp:
         start_time = time.time()
         last_frame_time = start_time
         fps_list = []
-        # Load gallery state if file exists
-        try:
-            gallery_state_path = Path("visualization_analysis") / f"gallery_state.json"
-            if os.path.exists(gallery_state_path):
-                self.gallery_manager.load_gallery_state(gallery_state_path)
-                self.gallery_loaded = True
-        except Exception as e:
-            print(f"⚠️  Error loading gallery state: {e}")
+        # Load gallery state if file exists (SimpleIdentityGallery)
+        simple_gallery_path = Path("visualization_analysis") / "simple_gallery.json"
+        if simple_gallery_path.exists():
+            print(f"[SimpleGallery] Loading gallery from {simple_gallery_path}")
+            self.simple_gallery.load_gallery(simple_gallery_path)
+            self.gallery_loaded = True
+        
         with tqdm(total=pbar_total, desc="Processing frames", unit="frame") as pbar:
             while cap.isOpened():
                 if not paused:
@@ -294,21 +300,38 @@ class PersonTrackingApp:
                         self._process_gait_parsing_parallel(frame, tracking_results, frame_count)
                         self._collect_parsing_results(frame_count)
                     self._update_statistics(tracking_results, frame_count)
+                    # --- Simple identity assignment ---
+                    # Aggregate embeddings for each track after enough are collected
+                    for track_id in list(self.track_embedding_buffer.keys()):
+                        if len(self.track_embedding_buffer[track_id]) >= self.min_sequence_length and track_id not in self.track_to_person:
+                            person_name = self.simple_gallery.add_track_embeddings(
+                                track_id,
+                                self.track_embedding_buffer[track_id],
+                                self.track_quality_buffer[track_id]
+                            )
+                            self.track_to_person[track_id] = person_name
+                    # For current frame, assign identities to all tracks (no duplicate per frame)
+                    frame_track_embeddings = {}
+                    for track_id in [t[0] for t in tracking_results]:
+                        # Use last embedding if available
+                        if self.track_embedding_buffer[track_id]:
+                            frame_track_embeddings[track_id] = self.track_embedding_buffer[track_id][-1]
+                    frame_assignments = self.simple_gallery.assign_identities_for_frame(frame_track_embeddings, frame_count)
+                    # Store for visualization
+                    self.track_identities = {}
                     identification_results = {}
                     identification_confidence = {}
-                    gallery_stats = None
+                    for track_id, person_name in frame_assignments.items():
+                        self.track_identities[track_id] = {
+                            'identity': person_name,
+                            'confidence': 1.0,
+                            'is_new': person_name not in self.simple_gallery.person_to_track.values(),
+                            'frame_assigned': frame_count
+                        }
+                        identification_results[track_id] = person_name
+                        identification_confidence[track_id] = 1.0
+                    gallery_stats = {'num_identities': len(self.simple_gallery.gallery)}
                     identification_stats = None
-                    if self.enable_gait_parsing and hasattr(self, 'track_identities'):
-                        for track_id, identity_info in self.track_identities.items():
-                            identification_results[track_id] = identity_info['identity']
-                            identification_confidence[track_id] = identity_info['confidence']
-                        if self.gallery_manager:
-                            gallery_stats = self.gallery_manager.get_gallery_summary()
-                            identification_stats = {
-                                'total_identities': gallery_stats.get('num_identities', 0),
-                                'collision_avoided': gallery_stats.get('collision_avoided_count', 0),
-                                'embeddings_processed': gallery_stats.get('total_embeddings_processed', 0)
-                            }
                     # --- FPS calculation ---
                     now = time.time()
                     current_fps = 1.0 / max(now - last_frame_time, 1e-6)
@@ -370,10 +393,13 @@ class PersonTrackingApp:
                 pass
         self.tracker.clear_memory_cache()
         self.tracker.synchronize_device()
-        if self.enable_gait_parsing:
-            self._generate_comprehensive_analysis(frame_count if 'frame_count' in locals() else 999)
-        if self.enable_gait_parsing and self.gallery_manager:
-            self._perform_track_consolidation()
+        # if self.enable_gait_parsing:
+        #     self._generate_comprehensive_analysis(frame_count if 'frame_count' in locals() else 999)
+        # if self.enable_gait_parsing and self.gallery_manager:
+        #     self._perform_track_consolidation()
+        # Save gallery at the end
+        print(f"[SimpleGallery] Saving gallery to {simple_gallery_path}")
+        self.simple_gallery.save_gallery(simple_gallery_path)
         self.config.verbose = verbose
     
     def _update_statistics(self, tracking_results: List[Tuple[int, any, float]], frame_count: int) -> None:
@@ -540,72 +566,27 @@ class PersonTrackingApp:
             
             if (len(self.track_silhouettes[track_id]) >= self.min_sequence_length and 
                 frame_count - self.track_last_xgait_extraction[track_id] >= self.xgait_extraction_interval):
-                
                 try:
-                    # Extract XGait features for identification
                     silhouette_sequence = self.track_silhouettes[track_id].copy()
                     parsing_sequence = self.track_parsing_masks[track_id].copy()
-                    
-                    # Use the enhanced XGait method with both silhouettes and parsing masks
                     feature_vector = self.xgait_model.extract_features_from_sequence(
                         silhouettes=silhouette_sequence,
                         parsing_masks=parsing_sequence
                     )
-                    
-                    # Process embedding with gallery manager for identification
-                    if feature_vector.size > 0 and self.gallery_manager is not None:
-                        # Compute sequence quality based on silhouette consistency
-                        sequence_quality = self._compute_sequence_quality(silhouette_sequence)
-                        
-                        print(f"🔍 Processing track {track_id} for XGait extraction frame number {frame_count} seq Q {sequence_quality}")
-                        # Process through gallery manager with collision avoidance
-                        assigned_identity, confidence, is_new_identity = self.gallery_manager.process_track_embedding(
-                            track_id=track_id,
-                            embedding=feature_vector,
-                            frame_number=frame_count,
-                            sequence_quality=sequence_quality
-                        )
-                        
-                        # Update track with identity information
-                        if assigned_identity:
-                            print(f"🎯 Track {track_id} -> {assigned_identity} "
-                                  f"(confidence: {confidence:.3f}, new: {is_new_identity})")
-                            
-                            # Store identity info for visualization
-                            if not hasattr(self, 'track_identities'):
-                                self.track_identities = {}
-                            self.track_identities[track_id] = {
-                                'identity': assigned_identity,
-                                'confidence': confidence,
-                                'is_new': is_new_identity,
-                                'frame_assigned': frame_count
-                            }
-                    
-                    # Store the extracted features for legacy compatibility
-                    self.track_gait_features[track_id].append(feature_vector)
-                    
-                    # Keep only recent features
-                    if len(self.track_gait_features[track_id]) > 10:
-                        self.track_gait_features[track_id].pop(0)
-                    
-                    # Update last extraction time
+                    sequence_quality = self._compute_sequence_quality(silhouette_sequence)
+                    # --- Simple gallery: collect embeddings and qualities ---
+                    self.track_embedding_buffer[track_id].append(feature_vector)
+                    self.track_quality_buffer[track_id].append(sequence_quality)
                     self.track_last_xgait_extraction[track_id] = frame_count
                     xgait_extracted = True
-                    
-                    if self.config.verbose:
-                        print(f"🚶 XGait features extracted for track {track_id}: "
-                              f"sequence_length={len(silhouette_sequence)}, "
-                              f"feature_shape={feature_vector.shape}")
-                        
-                        # Print gallery stats periodically
-                        if self.gallery_manager and frame_count % 100 == 0:
-                            stats = self.gallery_manager.get_gallery_summary()
-                            print(f"📚 Gallery: {stats['num_identities']} identities, "
-                                  f"{stats['total_embeddings_processed']} embeddings processed")
-                        
+                    # --- FIX: Store feature vector for visualization ---
+                    self.track_gait_features[track_id].append(feature_vector)
+                    # Optionally: keep only recent N features
+                    if len(self.track_gait_features[track_id]) > 10:
+                        self.track_gait_features[track_id].pop(0)
+                    # --- Debug: print feature vector stats ---
+                    print(f"[DEBUG] Track {track_id} XGait feature shape: {feature_vector.shape}, min: {np.min(feature_vector):.4f}, max: {np.max(feature_vector):.4f}, mean: {np.mean(feature_vector):.4f}, nonzero: {np.count_nonzero(feature_vector)}")
                 except Exception as e:
-                    if self.config.verbose:
-                        print(f"⚠️  XGait feature extraction failed for track {track_id}: {e}")
                     feature_vector = np.zeros(256)
             
             processing_time = time.time() - start_time
@@ -628,16 +609,13 @@ class PersonTrackingApp:
             return result
             
         except Exception as e:
-            if self.config.verbose:
-                print(f"⚠️  GaitParsing error for track {track_id}: {e}")
-            
             return {
                 'track_id': track_id,
                 'frame_count': frame_count,
                 'success': False,
                 'error': str(e)
             }
-    
+
     def _collect_parsing_results(self, frame_count: int) -> None:
         """Collect completed parsing results from the queue"""
         completed_tasks = []
@@ -714,20 +692,20 @@ class PersonTrackingApp:
             if not self.enable_gait_parsing:
                 return
                 
-            # Create comprehensive visualization with all tracks (4 rows: crop, silhouette, parsing, xgait)
+            # Create comprehensive visualization with all tracks (5 rows: crop, silhouette, parsing, xgait, similarity)
             max_tracks_to_show = min(len(tracking_results), 4)
             if max_tracks_to_show == 0:
                 return
                 
-            fig, axes = plt.subplots(4, max_tracks_to_show, figsize=(max_tracks_to_show * 4, 16))
+            fig, axes = plt.subplots(5, max_tracks_to_show, figsize=(max_tracks_to_show * 4, 20))
             if max_tracks_to_show == 1:
-                axes = axes.reshape(4, 1)
+                axes = axes.reshape(5, 1)
                 
             fig.suptitle(f'Frame {frame_count} - Complete GaitParsing Pipeline Results', 
                         fontsize=16, fontweight='bold')
             
             # Row labels
-            row_labels = ['Person Crop', 'U²-Net Silhouette', 'GaitParsing Mask', 'XGait Features']
+            row_labels = ['Person Crop', 'U²-Net Silhouette', 'GaitParsing Mask', 'XGait Features', 'Cosine Similarity']
             
             for idx, (track_id, box, conf) in enumerate(tracking_results[:max_tracks_to_show]):
                 col_idx = idx
@@ -805,29 +783,37 @@ class PersonTrackingApp:
                     
                     # Row 4: XGait Features Heatmap
                     ax = axes[3, col_idx] if max_tracks_to_show > 1 else axes[3]
+                    print(f"[HEATMAP DEBUG] Processing track {track_id} for XGait features {len(self.track_gait_features[track_id])}")
                     if track_id in self.track_gait_features and len(self.track_gait_features[track_id]) > 0:
                         latest_features = self.track_gait_features[track_id][-1]
-                        
-                        if len(latest_features) > 0 and np.any(latest_features != 0):
-                            # Reshape features to 2D for visualization (assume 256-dim -> 16x16)
-                            if len(latest_features) >= 256:
-                                feature_2d = latest_features[:256].reshape(16, 16)
-                            elif len(latest_features) >= 64:
-                                feature_2d = latest_features[:64].reshape(8, 8)
+                        # --- Debug: print feature vector shape and stats ---
+                        print(f"[HEATMAP DEBUG] Track {track_id} feature shape: {latest_features.shape}, min: {np.min(latest_features):.4f}, max: {np.max(latest_features):.4f}, mean: {np.mean(latest_features):.4f}, nonzero: {np.count_nonzero(latest_features)}")
+                        if latest_features.size > 0 and np.any(latest_features != 0):
+                            # Try to reshape to (256, 64) if possible
+                            if latest_features.size == 256*64:
+                                feature_2d = latest_features.reshape(256, 64)
+                            elif latest_features.size == 256:
+                                feature_2d = latest_features.reshape(16, 16)
+                            elif latest_features.size == 64:
+                                feature_2d = latest_features.reshape(8, 8)
                             else:
-                                # Pad smaller feature vectors
-                                padded = np.zeros(64)
-                                padded[:len(latest_features)] = latest_features
-                                feature_2d = padded.reshape(8, 8)
-                            
-                            im = ax.imshow(feature_2d, cmap='viridis', aspect='auto')
-                            ax.set_title(f'XGait Features\n{len(latest_features)}D vector', fontsize=10)
-                            
+                                # Pad or crop to 256x64
+                                feature_2d = np.zeros((256, 64))
+                                flat = latest_features.flatten()
+                                n = min(flat.size, 256*64)
+                                feature_2d.flat[:n] = flat[:n]
+                            # --- Normalize for better visualization ---
+                            vmin = np.percentile(feature_2d, 1)
+                            vmax = np.percentile(feature_2d, 99)
+                            im = ax.imshow(feature_2d, cmap='seismic', aspect='auto', vmin=vmin, vmax=vmax)
+                            ax.set_title(f'XGait Features\n{latest_features.size}D vector', fontsize=10)
                             # Add mini colorbar
                             from matplotlib.colorbar import make_axes, Colorbar
                             divider_ax = make_axes(ax, location="right", size="10%", pad=0.05)
                             cbar = plt.colorbar(im, cax=divider_ax[0])
                             cbar.ax.tick_params(labelsize=8)
+                            # Optionally, show a central crop or downsample for more visible structure
+                            # Example: feature_2d[100:156, 0:32] or use skimage.transform.resize
                         else:
                             ax.text(0.5, 0.5, 'Zero Features\n(MPS Issue)', ha='center', va='center', 
                                    transform=ax.transAxes, color='red')
@@ -840,10 +826,37 @@ class PersonTrackingApp:
                         ax.text(-0.1, 0.5, row_labels[3], rotation=90, va='center', ha='right', 
                                transform=ax.transAxes, fontsize=12, fontweight='bold')
             
+            # Row 5: Cosine Similarity Matrix (current tracks vs. all gallery)
+            from sklearn.metrics.pairwise import cosine_similarity
+            frame_features = []
+            frame_track_ids = []
+            for t_id in [t[0] for t in tracking_results[:max_tracks_to_show]]:
+                feats = self.track_gait_features.get(t_id, [])
+                if feats:
+                    frame_features.append(feats[-1])
+                    frame_track_ids.append(t_id)
+            gallery_names = list(self.simple_gallery.gallery.keys())
+            gallery_embs = [self.simple_gallery.gallery[name] for name in gallery_names]
+            sim_ax = axes[4, 0]
+            if frame_features and gallery_embs:
+                sims = cosine_similarity(frame_features, gallery_embs)
+                im = sim_ax.imshow(sims, cmap='coolwarm', vmin=0, vmax=1)
+                sim_ax.set_title('Track vs Gallery Cosine Similarity', fontsize=10)
+                sim_ax.set_xticks(range(len(gallery_names)))
+                sim_ax.set_yticks(range(len(frame_track_ids)))
+                sim_ax.set_xticklabels(gallery_names, fontsize=8, rotation=90)
+                sim_ax.set_yticklabels(frame_track_ids, fontsize=8)
+                fig.colorbar(im, ax=sim_ax, fraction=0.046, pad=0.04)
+            else:
+                sim_ax.text(0.5, 0.5, 'N/A', ha='center', va='center', fontsize=12)
+                sim_ax.set_title('Track vs Gallery Cosine Similarity', fontsize=10)
+            for col_idx in range(1, max_tracks_to_show):
+                axes[4, col_idx].axis('off')
+            
             # Hide unused subplots
-            for col_idx in range(max_tracks_to_show, 4):
+            for col_idx in range(max_tracks_to_show, 5):
                 if max_tracks_to_show > 1 and col_idx < axes.shape[1]:
-                    for row_idx in range(4):
+                    for row_idx in range(5):
                         axes[row_idx, col_idx].axis('off')
             
             # Add processing info
@@ -865,7 +878,7 @@ class PersonTrackingApp:
             fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98), 
                       fontsize=8, title="GaitParsing Parts")
             
-            # Save the comprehensive visualization
+            # Remove any frame limit on saving debug images
             output_path = self.debug_output_dir / f"frame_{frame_count:05d}_complete_pipeline.png"
             plt.savefig(output_path, dpi=120, bbox_inches='tight', facecolor='white')
             plt.close(fig)
