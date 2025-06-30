@@ -8,6 +8,7 @@ class SimpleIdentityGallery:
         self.gallery = {}  # person_name -> embedding
         self.track_to_person = {}  # track_id -> person_name
         self.person_to_track = {}  # person_name -> track_id (for initial assignment)
+        self.track_embedding_buffer = {}  # track_id -> list of embeddings
 
     def _generate_person_name(self):
         name = f"person_{self.person_counter:03d}"
@@ -101,3 +102,43 @@ class SimpleIdentityGallery:
         self.person_counter = 1 + max([int(p.split('_')[-1]) for p in self.gallery.keys() if p.startswith('person_')], default=0)
         self.track_to_person = {}
         self.person_to_track = {}
+
+    def set_track_embedding_buffer(self, track_embedding_buffer):
+        """
+        Set the reference to the track_embedding_buffer from the main app.
+        This ensures visualization methods always have access to the latest embeddings.
+        """
+        self.track_embedding_buffer = track_embedding_buffer
+
+    def get_all_embeddings(self):
+        """
+        Get all embeddings for visualization.
+        Returns:
+            List of (embedding, identity, track_id, type) tuples
+            type can be "track_embedding" or "gallery_embedding"
+        """
+        all_embeddings = []
+        # Add all track embeddings (if available)
+        if hasattr(self, 'track_embedding_buffer'):
+            for track_id, emb_list in self.track_embedding_buffer.items():
+                for emb in emb_list:
+                    # Try to find assigned identity
+                    identity = self.track_to_person.get(track_id, "Unassigned")
+                    all_embeddings.append((emb, identity, track_id, "track_embedding"))
+        # Add gallery embeddings
+        for person_name, emb in self.gallery.items():
+            all_embeddings.append((emb, person_name, -1, "gallery_embedding"))
+        return all_embeddings
+
+    def get_track_embeddings_by_track(self):
+        """
+        Get embeddings organized by track ID for visualization.
+        Returns:
+            Dict mapping track_id to list of (embedding, identity) tuples
+        """
+        track_data = {}
+        if hasattr(self, 'track_embedding_buffer'):
+            for track_id, emb_list in self.track_embedding_buffer.items():
+                identity = self.track_to_person.get(track_id, "Unassigned")
+                track_data[track_id] = [(emb, identity) for emb in emb_list]
+        return track_data

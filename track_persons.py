@@ -41,6 +41,7 @@ from src.models.silhouette_model import SilhouetteExtractor
 from src.models.parsing_model import HumanParsingModel
 from src.models.xgait_model import create_xgait_inference
 from src.utils.simple_identity_gallery import SimpleIdentityGallery
+from src.utils.embedding_visualization import EmbeddingVisualizer
 
 class PersonTrackingApp:
     """
@@ -65,53 +66,28 @@ class PersonTrackingApp:
         
         # Initialize GaitParsing pipeline which includes the real XGait model
         if self.enable_gait_parsing:
-            # Import gallery manager and visualization
-            from src.utils.identity_gallery import IdentityGalleryManager
-            from src.utils.embedding_visualization import EmbeddingVisualizer
-            
             self.silhouette_extractor = SilhouetteExtractor(device=config.model.device)
             self.parsing_model = HumanParsingModel(model_path='weights/parsing_u2net.pth', device=config.model.device)
             self.xgait_model = create_xgait_inference(model_path='weights/Gait3D-XGait-120000.pt', device=config.model.get_model_device("xgait"))
-            
-            # Initialize identity gallery manager with more permissive settings
-            self.gallery_manager = IdentityGalleryManager(
-                similarity_threshold=0.6,  # More permissive for initial matching
-                min_quality_threshold=0.4  # Lower quality threshold to catch more tracks
-                # embedding_update_strategy="weighted_average"
-            )
-            
-            # Connect gallery manager to XGait model
-            self.xgait_model.set_gallery_manager(self.gallery_manager)
-            
-            # Initialize embedding visualizer
-            self.embedding_visualizer = EmbeddingVisualizer()
-            
             # Create debug output directory
             self.debug_output_dir = Path("debug_gait_parsing")
             self.debug_output_dir.mkdir(exist_ok=True)
-            
             # Create visualization output directory
             self.visualization_output_dir = Path("visualization_analysis")
             self.visualization_output_dir.mkdir(exist_ok=True)
-            
             # Thread pool for parallel processing
             self.parsing_executor = ThreadPoolExecutor(max_workers=2)
             self.parsing_queue = queue.Queue(maxsize=50)  # Limit queue size to prevent memory issues
-            
             # Queue for visualization tasks to be processed in main thread
             self.visualization_queue = queue.Queue(maxsize=20)
-            
             print("✅ GaitParsing pipeline initialized")
             print(f"   Debug output: {self.debug_output_dir}")
             print(f"   Visualization output: {self.visualization_output_dir}")
             print(f"   XGait model weights loaded: {self.xgait_model.is_model_loaded()}")
-            print(f"   Gallery manager active: {self.gallery_manager is not None}")
         else:
             self.silhouette_extractor = None
             self.parsing_model = None
             self.xgait_model = None
-            self.gallery_manager = None
-            self.embedding_visualizer = None
             self.parsing_executor = None
             self.parsing_queue = None
             self.visualization_queue = None
@@ -239,6 +215,39 @@ class PersonTrackingApp:
             except:
                 pass
     
+    def visualize_embeddings(self, method: str = "umap", plot_type: str = "2d", save_path: str = None):
+        """
+        Visualize all gallery and track embeddings using EmbeddingVisualizer.
+        """
+        all_embeddings = self.simple_gallery.get_all_embeddings()
+        if not all_embeddings:
+            print("[EmbeddingVisualizer] No embeddings to visualize.")
+            return
+        visualizer = EmbeddingVisualizer()
+        # Visualize gallery + track embeddings together
+        for method in ["umap", "pca", "tsne"]:
+            fig = visualizer.visualize_identity_gallery(
+                all_embeddings=all_embeddings,
+                method=method,
+                save_path=f"visualization_analysis/embedding_{method}.png",
+                show_labels=True,
+                plot_type="2d"
+            )
+            if fig is None:
+                print(f"[EmbeddingVisualizer] No gallery embeddings to visualize for {method}.")
+        # Visualize track embeddings only (by track)
+        embeddings_by_track = self.simple_gallery.get_track_embeddings_by_track()
+        for method in ["umap", "pca", "tsne"]:
+            fig = visualizer.visualize_track_embeddings(
+                embeddings_by_track=embeddings_by_track,
+                method=method,
+                save_path=f"visualization_analysis/track_embedding_{method}.png",
+                show_labels=True,
+                plot_type="2d"
+            )
+            if fig is None:
+                print(f"[EmbeddingVisualizer] No track embeddings to visualize for {method}.")
+    
     def process_video(self) -> None:
         """Process the input video and perform tracking"""
         # Open video
@@ -360,17 +369,6 @@ class PersonTrackingApp:
                         cv2.imshow("Person Tracking & XGait Analysis", annotated_frame)
                     if frame_count % 500 == 0:
                         self.tracker.clear_memory_cache()
-                    if frame_count % 300 == 0 and self.gallery_manager:
-                        current_identities = len(self.gallery_manager.identities)
-                        if current_identities > 8:
-                            consolidation_map = self.gallery_manager.consolidate_fragmented_tracks(
-                                consolidation_threshold=0.65
-                            )
-                            if consolidation_map and hasattr(self, 'track_identities'):
-                                for primary_id, track_list in consolidation_map.items():
-                                    for track_id in track_list:
-                                        if track_id in self.track_identities:
-                                            self.track_identities[track_id]['identity'] = primary_id
                     pbar.update(1)
                 if self.config.video.display_window:
                     key = cv2.waitKey(1) & 0xFF
@@ -393,14 +391,39 @@ class PersonTrackingApp:
                 pass
         self.tracker.clear_memory_cache()
         self.tracker.synchronize_device()
-        # if self.enable_gait_parsing:
-        #     self._generate_comprehensive_analysis(frame_count if 'frame_count' in locals() else 999)
-        # if self.enable_gait_parsing and self.gallery_manager:
-        #     self._perform_track_consolidation()
         # Save gallery at the end
         print(f"[SimpleGallery] Saving gallery to {simple_gallery_path}")
         self.simple_gallery.save_gallery(simple_gallery_path)
         self.config.verbose = verbose
+        # --- Embedding Visualization ---
+        print("[EmbeddingVisualizer] Visualizing all gallery and track embeddings...")
+        # Ensure gallery has up-to-date track embeddings for visualization
+        self.simple_gallery.set_track_embedding_buffer(self.track_embedding_buffer)
+        all_embeddings = self.simple_gallery.get_all_embeddings()
+        embeddings_by_track = self.simple_gallery.get_track_embeddings_by_track()
+        visualizer = EmbeddingVisualizer()
+        # Visualize gallery + track embeddings together
+        for method in ["umap", "pca", "tsne"]:
+            fig = visualizer.visualize_identity_gallery(
+                all_embeddings=all_embeddings,
+                method=method,
+                save_path=f"visualization_analysis/embedding_{method}.png",
+                show_labels=True,
+                plot_type="2d"
+            )
+            if fig is None:
+                print(f"[EmbeddingVisualizer] No gallery embeddings to visualize for {method}.")
+        # Visualize track embeddings only (by track)
+        for method in ["umap", "pca", "tsne"]:
+            fig = visualizer.visualize_track_embeddings(
+                embeddings_by_track=embeddings_by_track,
+                method=method,
+                save_path=f"visualization_analysis/track_embedding_{method}.png",
+                show_labels=True,
+                plot_type="2d"
+            )
+            if fig is None:
+                print(f"[EmbeddingVisualizer] No track embeddings to visualize for {method}.")
     
     def _update_statistics(self, tracking_results: List[Tuple[int, any, float]], frame_count: int) -> None:
         """Update tracking statistics"""
@@ -585,7 +608,7 @@ class PersonTrackingApp:
                     if len(self.track_gait_features[track_id]) > 10:
                         self.track_gait_features[track_id].pop(0)
                     # --- Debug: print feature vector stats ---
-                    print(f"[DEBUG] Track {track_id} XGait feature shape: {feature_vector.shape}, min: {np.min(feature_vector):.4f}, max: {np.max(feature_vector):.4f}, mean: {np.mean(feature_vector):.4f}, nonzero: {np.count_nonzero(feature_vector)}")
+                    # print(f"[DEBUG] Track {track_id} XGait feature shape: {feature_vector.shape}, min: {np.min(feature_vector):.4f}, max: {np.max(feature_vector):.4f}, mean: {np.mean(feature_vector):.4f}, nonzero: {np.count_nonzero(feature_vector)}")
                 except Exception as e:
                     feature_vector = np.zeros(256)
             
@@ -783,11 +806,11 @@ class PersonTrackingApp:
                     
                     # Row 4: XGait Features Heatmap
                     ax = axes[3, col_idx] if max_tracks_to_show > 1 else axes[3]
-                    print(f"[HEATMAP DEBUG] Processing track {track_id} for XGait features {len(self.track_gait_features[track_id])}")
+                    # print(f"[HEATMAP DEBUG] Processing track {track_id} for XGait features {len(self.track_gait_features[track_id])}")
                     if track_id in self.track_gait_features and len(self.track_gait_features[track_id]) > 0:
                         latest_features = self.track_gait_features[track_id][-1]
                         # --- Debug: print feature vector shape and stats ---
-                        print(f"[HEATMAP DEBUG] Track {track_id} feature shape: {latest_features.shape}, min: {np.min(latest_features):.4f}, max: {np.max(latest_features):.4f}, mean: {np.mean(latest_features):.4f}, nonzero: {np.count_nonzero(latest_features)}")
+                        # print(f"[HEATMAP DEBUG] Track {track_id} feature shape: {latest_features.shape}, min: {np.min(latest_features):.4f}, max: {np.max(latest_features):.4f}, mean: {np.mean(latest_features):.4f}, nonzero: {np.count_nonzero(latest_features)}")
                         if latest_features.size > 0 and np.any(latest_features != 0):
                             # Try to reshape to (256, 64) if possible
                             if latest_features.size == 256*64:
@@ -891,317 +914,6 @@ class PersonTrackingApp:
                 print(f"⚠️  Error saving complete pipeline visualization: {e}")
                 import traceback
                 traceback.print_exc()
-    
-    def _generate_comprehensive_analysis(self, total_frames: int):
-        """
-        Generate comprehensive analysis and visualization of the identification results
-        
-        Args:
-            total_frames: Total number of frames processed
-        """
-        if not self.gallery_manager or not self.embedding_visualizer:
-            print("⚠️  Gallery manager or visualizer not available for analysis")
-            return
-        
-        print("\n" + "=" * 60)
-        print("🎯 GENERATING COMPREHENSIVE IDENTIFICATION ANALYSIS")
-        print("=" * 60)
-        
-        # Get gallery statistics
-        gallery_stats = self.gallery_manager.get_gallery_summary()
-        print(f"\n📊 Final Gallery Statistics:")
-        print(f"   • Total identities created: {gallery_stats['num_identities']}")
-        print(f"   • Total embeddings processed: {gallery_stats['total_embeddings_processed']}")
-        print(f"   • Collision avoidance events: {gallery_stats['collision_avoided_count']}")
-        print(f"   • Identity updates performed: {gallery_stats['identity_updates_count']}")
-        print(f"   • Average embeddings per track: {gallery_stats['average_embeddings_per_track']:.2f}")
-        
-        # Identity quality analysis
-        quality_scores = gallery_stats.get('gallery_quality_scores', {})
-        if quality_scores:
-            avg_quality = np.mean(list(quality_scores.values()))
-            print(f"   • Average identity quality: {avg_quality:.3f}")
-            print(f"   • Quality range: {min(quality_scores.values()):.3f} - {max(quality_scores.values()):.3f}")
-        
-        # Print identity assignments
-        print(f"\n🏷️  Identity Assignments:")
-        if hasattr(self, 'track_identities'):
-            for track_id, identity_info in self.track_identities.items():
-                print(f"   Track {track_id:2d} -> {identity_info['identity']} "
-                      f"(conf: {identity_info['confidence']:.3f}, "
-                      f"new: {identity_info['is_new']}, "
-                      f"frame: {identity_info['frame_assigned']})")
-        
-        # Frame-level collision analysis
-        frame_collision_stats = self._analyze_frame_collisions()
-        if frame_collision_stats['total_collision_frames'] > 0:
-            print(f"\n🚫 Collision Avoidance Analysis:")
-            print(f"   • Frames with multiple tracks: {frame_collision_stats['total_collision_frames']}")
-            print(f"   • Maximum tracks in single frame: {frame_collision_stats['max_tracks_per_frame']}")
-            print(f"   • Collision avoidance rate: {frame_collision_stats['avoidance_rate']:.1f}%")
-        
-        # Save gallery state
-        try:
-            gallery_state_path = self.visualization_output_dir / f"gallery_state.json"
-            self.gallery_manager.save_gallery_state(str(gallery_state_path))
-            
-            # Export embeddings for external analysis
-            export_dir = self.visualization_output_dir / f"embeddings_export"
-            self.gallery_manager.export_embeddings_for_analysis(str(export_dir))
-            
-            print(f"\n💾 Data Export:")
-            print(f"   • Gallery state: {gallery_state_path}")
-            print(f"   • Embeddings export: {export_dir}")
-            
-        except Exception as e:
-            print(f"⚠️  Error saving gallery state: {e}")
-        
-        # Generate visualizations
-        try:
-            print(f"\n🎨 Generating Embedding Visualizations...")
-            
-            # Create timestamped visualization directory
-            viz_dir = self.visualization_output_dir / f"visualizations"
-            
-            # Generate comprehensive visualization report
-            viz_report = self.embedding_visualizer.create_comprehensive_report(
-                gallery_manager=self.gallery_manager,
-                output_dir=str(viz_dir),
-                methods=["pca", "tsne", "umap"]
-            )
-            
-            print(f"✅ Visualizations completed:")
-            print(f"   • Output directory: {viz_dir}")
-            print(f"   • Total visualizations: {viz_report['total_visualizations_created']}")
-            print(f"   • Methods used: {', '.join(viz_report['visualization_methods'])}")
-            
-            # Create summary visualization showing key insights
-            self._create_summary_dashboard(viz_dir, gallery_stats, frame_collision_stats, quality_scores)
-            
-        except Exception as e:
-            print(f"⚠️  Error generating visualizations: {e}")
-            import traceback
-            traceback.print_exc()
-        
-        # Performance analysis
-        self._print_performance_analysis(total_frames, gallery_stats)
-        
-        print("\n" + "=" * 60)
-        print("🎉 COMPREHENSIVE ANALYSIS COMPLETED")
-        print("=" * 60)
-    
-    def _analyze_frame_collisions(self) -> Dict:
-        """Analyze frame-level collision statistics"""
-        if not self.gallery_manager:
-            return {'total_collision_frames': 0, 'max_tracks_per_frame': 0, 'avoidance_rate': 0.0}
-        
-        frame_assignments = self.gallery_manager.frame_assignments
-        collision_frames = 0
-        max_tracks = 0
-        total_assignments = 0
-        
-        for frame_num, assignments in frame_assignments.items():
-            num_tracks = len(assignments)
-            total_assignments += num_tracks
-            max_tracks = max(max_tracks, num_tracks)
-            
-            if num_tracks > 1:
-                collision_frames += 1
-        
-        # Calculate avoidance rate (percentage of successful collision avoidance)
-        avoidance_rate = (self.gallery_manager.collision_avoided_count / 
-                         max(total_assignments, 1)) * 100
-        
-        return {
-            'total_collision_frames': collision_frames,
-            'max_tracks_per_frame': max_tracks,
-            'avoidance_rate': avoidance_rate,
-            'total_assignments': total_assignments
-        }
-    
-    def _create_summary_dashboard(self, output_dir: Path, gallery_stats: Dict, 
-                                collision_stats: Dict, quality_scores: Dict):
-        """Create a summary dashboard with key metrics"""
-        try:
-            import matplotlib.pyplot as plt
-            
-            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-            
-            # 1. Identity distribution
-            if quality_scores:
-                identities = list(quality_scores.keys())
-                qualities = list(quality_scores.values())
-                
-                ax1.bar(range(len(identities)), qualities, color='skyblue')
-                ax1.set_xlabel('Identity')
-                ax1.set_ylabel('Quality Score')
-                ax1.set_title('Identity Quality Distribution')
-                ax1.set_xticks(range(len(identities)))
-                ax1.set_xticklabels([id.replace('Person_', 'P') for id in identities], rotation=45)
-                ax1.grid(True, alpha=0.3)
-            
-            # 2. Gallery growth over time
-            embeddings_data = []
-            if hasattr(self, 'track_identities'):
-                for track_id, info in self.track_identities.items():
-                    embeddings_data.append(info['frame_assigned'])
-                
-                if embeddings_data:
-                    ax2.hist(embeddings_data, bins=min(20, len(embeddings_data)), 
-                            alpha=0.7, color='lightgreen')
-                    ax2.set_xlabel('Frame Number')
-                    ax2.set_ylabel('Identity Assignments')
-                    ax2.set_title('Identity Assignment Timeline')
-                    ax2.grid(True, alpha=0.3)
-            
-            # 3. Collision avoidance metrics
-            collision_labels = ['Successful\nAvoidance', 'No Collision\nNeeded']
-            collision_values = [
-                gallery_stats.get('collision_avoided_count', 0),
-                gallery_stats.get('total_embeddings_processed', 0) - gallery_stats.get('collision_avoided_count', 0)
-            ]
-            
-            colors = ['lightcoral', 'lightblue']
-            ax3.pie(collision_values, labels=collision_labels, colors=colors, autopct='%1.1f%%')
-            ax3.set_title('Collision Avoidance Success Rate')
-            
-            # 4. Processing statistics
-            stats_labels = ['Identities', 'Tracks', 'Embeddings\n(÷10)', 'Updates']
-            stats_values = [
-                gallery_stats.get('num_identities', 0),
-                gallery_stats.get('total_tracks', 0),
-                gallery_stats.get('total_embeddings_processed', 0) // 10,  # Scale down for visibility
-                gallery_stats.get('identity_updates_count', 0)
-            ]
-            
-            ax4.bar(stats_labels, stats_values, color=['gold', 'orange', 'lightpink', 'lightsteelblue'])
-            ax4.set_ylabel('Count')
-            ax4.set_title('Processing Statistics Summary')
-            ax4.grid(True, alpha=0.3)
-            
-            plt.tight_layout()
-            plt.savefig(output_dir / 'summary_dashboard.png', dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            print(f"   • Summary dashboard: summary_dashboard.png")
-            
-        except Exception as e:
-            print(f"⚠️  Error creating summary dashboard: {e}")
-    
-    def _print_performance_analysis(self, total_frames: int, gallery_stats: Dict):
-        """Print performance analysis"""
-        print(f"\n⚡ Performance Analysis:")
-        
-        if total_frames > 0:
-            embeddings_per_frame = gallery_stats.get('total_embeddings_processed', 0) / total_frames
-            print(f"   • Embeddings per frame: {embeddings_per_frame:.2f}")
-            
-            identities_per_frame = gallery_stats.get('num_identities', 0) / total_frames
-            print(f"   • New identities per frame: {identities_per_frame:.3f}")
-        
-        # Gallery efficiency
-        total_embeddings = gallery_stats.get('total_embeddings_processed', 0)
-        total_identities = gallery_stats.get('num_identities', 0)
-        if total_identities > 0:
-            embeddings_per_identity = total_embeddings / total_identities
-            print(f"   • Embeddings per identity: {embeddings_per_identity:.1f}")
-        
-        # Update efficiency
-        updates = gallery_stats.get('identity_updates_count', 0)
-        if total_embeddings > 0:
-            update_rate = updates / total_embeddings * 100
-            print(f"   • Identity update rate: {update_rate:.1f}%")
-        
-        # Memory efficiency
-        avg_embeddings_per_track = gallery_stats.get('average_embeddings_per_track', 0)
-        print(f"   • Average embeddings per track: {avg_embeddings_per_track:.1f}")
-        
-        # Success metrics
-        collision_avoidance = gallery_stats.get('collision_avoided_count', 0)
-        if collision_avoidance > 0:
-            print(f"   • Collision avoidance events: {collision_avoidance}")
-            print(f"   • System robustness: HIGH ✅")
-        else:
-            print(f"   • System robustness: MODERATE ⚠️")
-    
-    def _perform_track_consolidation(self):
-        """Perform track consolidation to reduce fragmentation"""
-        if not self.gallery_manager:
-            return
-        
-        print("\n" + "=" * 60)
-        print("🔄 PERFORMING TRACK CONSOLIDATION ANALYSIS")
-        print("=" * 60)
-        
-        # Analyze fragmentation before consolidation
-        fragmentation_analysis = self.gallery_manager.analyze_track_fragmentation()
-        
-        print(f"\n📊 Pre-Consolidation Analysis:")
-        print(f"   • Total tracks created: {fragmentation_analysis['total_tracks']}")
-        print(f"   • Total identities: {fragmentation_analysis['total_identities']}")
-        print(f"   • Average tracks per identity: {fragmentation_analysis['avg_tracks_per_identity']:.1f}")
-        print(f"   • Estimated actual people: {fragmentation_analysis['estimated_actual_people']}")
-        print(f"   • Fragmentation ratio: {fragmentation_analysis['fragmentation_ratio']:.2f}")
-        
-        if fragmentation_analysis['is_fragmented']:
-            print(f"   ⚠️  High fragmentation detected (ratio > 1.5)")
-            print(f"   🔄 Running consolidation...")
-            
-            # Perform consolidation with more aggressive threshold
-            consolidation_map = self.gallery_manager.consolidate_fragmented_tracks(
-                consolidation_threshold=0.55  # More aggressive consolidation threshold
-            )
-            
-            # Analyze after consolidation
-            post_analysis = self.gallery_manager.analyze_track_fragmentation()
-            
-            print(f"\n📊 Post-Consolidation Analysis:")
-            print(f"   • Final identities: {post_analysis['total_identities']}")
-            print(f"   • Identities removed: {fragmentation_analysis['total_identities'] - post_analysis['total_identities']}")
-            print(f"   • New fragmentation ratio: {post_analysis['fragmentation_ratio']:.2f}")
-            print(f"   • Improvement: {fragmentation_analysis['fragmentation_ratio'] - post_analysis['fragmentation_ratio']:.2f}")
-            
-            # Show consolidation results
-            if consolidation_map:
-                print(f"\n🔗 Consolidation Results:")
-                for identity, tracks in consolidation_map.items():
-                    print(f"   {identity}: merged tracks {sorted(tracks)}")
-            
-            # Update our local tracking data
-            if hasattr(self, 'track_identities'):
-                self._update_local_identities_after_consolidation(consolidation_map)
-            
-        else:
-            print(f"   ✅ Low fragmentation - no consolidation needed")
-        
-        print("\n" + "=" * 60)
-        print("✅ TRACK CONSOLIDATION COMPLETED")
-        print("=" * 60)
-    
-    def _update_local_identities_after_consolidation(self, consolidation_map: Dict[str, List[int]]):
-        """Update local track identity mappings after consolidation"""
-        # Create reverse mapping: track_id -> final_identity
-        if not consolidation_map:
-            return
-        
-        track_to_final_identity = {}
-        for final_identity, track_list in consolidation_map.items():
-            for track_id in track_list:
-                track_to_final_identity[track_id] = final_identity
-        
-        # Update track_identities
-        updated_count = 0
-        for track_id, identity_info in self.track_identities.items():
-            if track_id in track_to_final_identity:
-                old_identity = identity_info['identity']
-                new_identity = track_to_final_identity[track_id]
-                if old_identity != new_identity:
-                    identity_info['identity'] = new_identity
-                    identity_info['consolidated'] = True
-                    updated_count += 1
-        
-        if updated_count > 0:
-            print(f"   📝 Updated {updated_count} local track identity mappings")
     
     def get_is_new_identity_dict(self) -> dict:
         """

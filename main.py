@@ -84,6 +84,8 @@ def configure_system(args):
     config.video.display_window = not args.no_display
     config.video.save_annotated_video = args.save_video or bool(args.output_video)
     
+    if args.max_frames is not None:
+        config.video.max_frames = args.max_frames
     if args.output_video:
         config.video.output_video_path = args.output_video
     elif args.save_video:

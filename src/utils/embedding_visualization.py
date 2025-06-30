@@ -12,6 +12,7 @@ import pandas as pd
 from pathlib import Path
 import logging
 from datetime import datetime
+import json
 
 # Optional imports with fallbacks
 try:
@@ -19,7 +20,7 @@ try:
     UMAP_AVAILABLE = True
 except ImportError:
     UMAP_AVAILABLE = False
-    print("⚠️  UMAP not available, using PCA/t-SNE only")
+    print("\u26a0\ufe0f  UMAP not available, using PCA/t-SNE only")
 
 try:
     import plotly.graph_objects as go
@@ -28,7 +29,7 @@ try:
     PLOTLY_AVAILABLE = True
 except ImportError:
     PLOTLY_AVAILABLE = False
-    print("⚠️  Plotly not available, using matplotlib only")
+    print("\u26a0\ufe0f  Plotly not available, using matplotlib only")
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +83,8 @@ class EmbeddingVisualizer:
         if n_tracks <= 10:
             track_palette = sns.color_palette("tab10", n_tracks)
         else:
-            track_palette = sns.color_palette("husl", n_tracks)
-        
+            # Use a darker palette for more tracks
+            track_palette = sns.color_palette("dark", n_tracks)
         unique_tracks = sorted(list(set(track_ids)))
         self.track_colors = {track_id: track_palette[i % len(track_palette)] 
                            for i, track_id in enumerate(unique_tracks)}
@@ -91,9 +92,10 @@ class EmbeddingVisualizer:
         # Generate colors for identities
         n_identities = len(set(identity_ids))
         if n_identities <= 10:
-            identity_palette = sns.color_palette("Set3", n_identities)
+            # Use a darker Set1 palette for identities
+            identity_palette = sns.color_palette("Set1", n_identities)
         else:
-            identity_palette = sns.color_palette("husl", n_identities)
+            identity_palette = sns.color_palette("dark", n_identities)
         
         unique_identities = sorted(list(set(identity_ids)))
         self.identity_colors = {identity_id: identity_palette[i % len(identity_palette)] 
@@ -101,7 +103,7 @@ class EmbeddingVisualizer:
     
     def _reduce_dimensions(self, embeddings: np.ndarray, method: str = "pca", n_components: int = 2) -> np.ndarray:
         """
-        Reduce embedding dimensions using specified method
+        Reduce embedding dimensions using specified method, robust to UMAP/TSNE errors and small datasets.
         
         Args:
             embeddings: High-dimensional embeddings
@@ -114,44 +116,41 @@ class EmbeddingVisualizer:
         if embeddings.shape[0] < 2:
             logger.warning("Not enough embeddings for dimensionality reduction")
             return embeddings
-        
+        # --- Robustness for UMAP/TSNE: fallback if too few embeddings ---
+        if method in ("umap", "tsne"):
+            min_required = max(n_components + 1, 3)
+            if embeddings.shape[0] < min_required:
+                logger.warning(f"Not enough samples for {method.upper()} (need at least {min_required}, got {embeddings.shape[0]})")
+                # Fallback to PCA
+                if method != "pca":
+                    return self._reduce_dimensions(embeddings, method="pca", n_components=n_components)
+                return embeddings
         if method == "pca":
             if self.pca_model is None or self.pca_model.n_components != n_components:
                 self.pca_model = PCA(n_components=n_components, random_state=self.random_state)
             reduced = self.pca_model.fit_transform(embeddings)
-            
         elif method == "tsne":
-            # t-SNE parameters adjusted for gait embeddings
             perplexity = min(30, max(2, embeddings.shape[0] // 3))
             if self.tsne_model is None or self.tsne_model.n_components != n_components:
-                self.tsne_model = TSNE(
-                    n_components=n_components,
-                    perplexity=perplexity,
-                    random_state=self.random_state,
-                    n_iter=1000,
-                    learning_rate='auto'
-                )
+                self.tsne_model = TSNE(n_components=n_components, random_state=self.random_state, perplexity=perplexity)
             reduced = self.tsne_model.fit_transform(embeddings)
-            
         elif method == "umap":
             if not UMAP_AVAILABLE:
-                print("⚠️  UMAP not available, falling back to PCA")
-                return self._reduce_dimensions(embeddings, "pca", n_components)
-            
-            # UMAP parameters optimized for clustering
-            n_neighbors = min(15, max(2, embeddings.shape[0] // 5))
-            if self.umap_model is None or self.umap_model.n_components != n_components:
-                self.umap_model = umap.UMAP(
-                    n_components=n_components,
-                    n_neighbors=n_neighbors,
-                    min_dist=0.1,
-                    random_state=self.random_state
-                )
-            reduced = self.umap_model.fit_transform(embeddings)
-            
+                logger.warning("UMAP not available, falling back to PCA.")
+                return self._reduce_dimensions(embeddings, method="pca", n_components=n_components)
+            n_samples = embeddings.shape[0]
+            n_neighbors = min(15, max(2, n_samples - 1))
+            if n_samples <= n_neighbors or n_samples <= n_components:
+                logger.warning(f"Not enough samples for UMAP (n_neighbors={n_neighbors}, n_samples={n_samples})")
+                return self._reduce_dimensions(embeddings, method="pca", n_components=n_components)
+            try:
+                self.umap_model = umap.UMAP(n_components=n_components, n_neighbors=n_neighbors, random_state=self.random_state)
+                reduced = self.umap_model.fit_transform(embeddings)
+            except Exception as e:
+                logger.warning(f"UMAP failed with error: {e}. Falling back to PCA.")
+                return self._reduce_dimensions(embeddings, method="pca", n_components=n_components)
         else:
             raise ValueError(f"Unknown reduction method: {method}")
-        
         return reduced
     
     def visualize_track_embeddings(self, 
@@ -159,7 +158,7 @@ class EmbeddingVisualizer:
                                  method: str = "umap",
                                  save_path: Optional[str] = None,
                                  show_labels: bool = True,
-                                 plot_type: str = "2d") -> plt.Figure:
+                                 plot_type: str = "2d") -> Optional[plt.Figure]:
         """
         Visualize embeddings colored by track ID
         
@@ -185,7 +184,12 @@ class EmbeddingVisualizer:
                 identity_labels.append(identity)
         
         if len(all_embeddings) == 0:
-            logger.warning("No embeddings to visualize")
+            # Only print a single message, not both here and in the caller
+            return None
+        
+        # --- Prevent 3D plot if not enough samples ---
+        if plot_type == "3d" and len(all_embeddings) < 3:
+            logger.warning("Not enough embeddings for 3D visualization (need at least 3, got %d)", len(all_embeddings))
             return None
         
         embeddings_array = np.array(all_embeddings)
@@ -193,7 +197,12 @@ class EmbeddingVisualizer:
         
         # Reduce dimensions
         n_components = 3 if plot_type == "3d" else 2
-        reduced_embeddings = self._reduce_dimensions(embeddings_array, method, n_components)
+        # Robust fallback: try requested method, fallback to PCA if it fails
+        try:
+            reduced_embeddings = self._reduce_dimensions(embeddings_array, method, n_components)
+        except Exception as e:
+            logger.warning(f"Dimensionality reduction ({method}) failed: {e}. Falling back to PCA.")
+            reduced_embeddings = self._reduce_dimensions(embeddings_array, method="pca", n_components=n_components)
         
         # Create plot
         if plot_type == "3d":
@@ -248,7 +257,7 @@ class EmbeddingVisualizer:
                                  method: str = "umap",
                                  save_path: Optional[str] = None,
                                  show_labels: bool = True,
-                                 plot_type: str = "2d") -> plt.Figure:
+                                 plot_type: str = "2d") -> Optional[plt.Figure]:
         """
         Visualize all embeddings with gallery identities highlighted
         
@@ -266,6 +275,11 @@ class EmbeddingVisualizer:
             logger.warning("No embeddings to visualize")
             return None
         
+        # --- Prevent 3D plot if not enough samples ---
+        if plot_type == "3d" and len(all_embeddings) < 3:
+            logger.warning("Not enough embeddings for 3D visualization (need at least 3, got %d)", len(all_embeddings))
+            return None
+        
         # Separate data
         embeddings = np.array([emb[0] for emb in all_embeddings])
         identities = [emb[1] for emb in all_embeddings]
@@ -276,41 +290,43 @@ class EmbeddingVisualizer:
         
         # Reduce dimensions
         n_components = 3 if plot_type == "3d" else 2
-        reduced_embeddings = self._reduce_dimensions(embeddings, method, n_components)
+        # Robust fallback: try requested method, fallback to PCA if it fails
+        try:
+            reduced_embeddings = self._reduce_dimensions(embeddings, method, n_components)
+        except Exception as e:
+            logger.warning(f"Dimensionality reduction ({method}) failed: {e}. Falling back to PCA.")
+            reduced_embeddings = self._reduce_dimensions(embeddings, method="pca", n_components=n_components)
         
         # Create plot
         if plot_type == "3d":
             fig = plt.figure(figsize=(14, 10))
             ax = fig.add_subplot(111, projection='3d')
             
-            # Plot track embeddings first
+            # Plot track embeddings by identity
             track_mask = np.array(types) == "track_embedding"
             if np.any(track_mask):
                 track_points = reduced_embeddings[track_mask]
                 track_identities = np.array(identities)[track_mask]
-                
                 for identity in set(track_identities):
                     identity_mask = track_identities == identity
                     points = track_points[identity_mask]
                     if len(points) > 0:
                         ax.scatter(points[:, 0], points[:, 1], points[:, 2],
-                                 c=[self.identity_colors.get(identity, 'gray')],
-                                 alpha=0.6, s=30, label=f'{identity} (track)')
+                                   c=[self.identity_colors.get(identity, 'gray')],
+                                   alpha=0.6, s=30, label=f'{identity} (track)')
             
             # Plot gallery embeddings on top
             gallery_mask = np.array(types) == "gallery_embedding"
             if np.any(gallery_mask):
                 gallery_points = reduced_embeddings[gallery_mask]
                 gallery_identities = np.array(identities)[gallery_mask]
-                
                 ax.scatter(gallery_points[:, 0], gallery_points[:, 1], gallery_points[:, 2],
-                         c='red', s=200, marker='*', alpha=0.9,
-                         edgecolors='black', linewidths=2, label='Gallery embeddings')
-                
+                           c='red', s=200, marker='*', alpha=0.9,
+                           edgecolors='black', linewidths=2, label='Gallery embeddings')
                 if show_labels:
                     for i, identity in enumerate(gallery_identities):
                         ax.text(gallery_points[i, 0], gallery_points[i, 1], gallery_points[i, 2],
-                               identity, fontsize=8)
+                                identity, fontsize=8)
             
             ax.set_xlabel(f'{method.upper()} Component 1')
             ax.set_ylabel(f'{method.upper()} Component 2')
@@ -319,42 +335,40 @@ class EmbeddingVisualizer:
         else:
             fig, ax = plt.subplots(figsize=self.figure_size)
             
-            # Plot track embeddings first
+            # Plot track embeddings by identity
             track_mask = np.array(types) == "track_embedding"
             if np.any(track_mask):
                 track_points = reduced_embeddings[track_mask]
                 track_identities = np.array(identities)[track_mask]
-                track_track_ids = np.array(track_ids)[track_mask]
-                
                 for identity in set(track_identities):
                     identity_mask = track_identities == identity
                     points = track_points[identity_mask]
                     if len(points) > 0:
                         ax.scatter(points[:, 0], points[:, 1],
-                                 c=[self.identity_colors.get(identity, 'gray')],
-                                 alpha=0.6, s=30, label=f'{identity}')
+                                   c=[self.identity_colors.get(identity, 'gray')],
+                                   alpha=0.6, s=30, label=f'{identity} (track)')
             
             # Plot gallery embeddings on top
             gallery_mask = np.array(types) == "gallery_embedding"
             if np.any(gallery_mask):
                 gallery_points = reduced_embeddings[gallery_mask]
                 gallery_identities = np.array(identities)[gallery_mask]
-                
                 ax.scatter(gallery_points[:, 0], gallery_points[:, 1],
-                         c='red', s=200, marker='*', alpha=0.9,
-                         edgecolors='black', linewidths=2, label='Gallery embeddings')
-                
+                           c='red', s=200, marker='*', alpha=0.9,
+                           edgecolors='black', linewidths=2, label='Gallery embeddings')
                 if show_labels:
                     for i, identity in enumerate(gallery_identities):
                         ax.annotate(identity, gallery_points[i], fontsize=8, ha='center',
-                                  bbox=dict(boxstyle="round,pad=0.3", facecolor='yellow', alpha=0.7))
+                                    bbox=dict(boxstyle="round,pad=0.3", facecolor='yellow', alpha=0.7))
             
             ax.set_xlabel(f'{method.upper()} Component 1')
             ax.set_ylabel(f'{method.upper()} Component 2')
         
         plt.title(f'Identity Gallery Visualization ({method.upper()})\n'
                  f'{len(set(identities))} identities, {len(embeddings)} total embeddings')
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        ax.legend(by_label.values(), by_label.keys(), bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.tight_layout()
         
         if save_path:
@@ -379,23 +393,24 @@ class EmbeddingVisualizer:
             Plotly figure or None if Plotly not available
         """
         if not PLOTLY_AVAILABLE:
-            print("⚠️  Plotly not available, skipping interactive visualization")
+            print("\u26a0\ufe0f  Plotly not available, skipping interactive visualization")
             return None
         
         if len(all_embeddings) == 0:
             logger.warning("No embeddings to visualize")
             return None
         
-        # Prepare data
         embeddings = np.array([emb[0] for emb in all_embeddings])
         identities = [emb[1] for emb in all_embeddings]
         track_ids = [emb[2] for emb in all_embeddings]
         types = [emb[3] for emb in all_embeddings]
+        # Robust fallback: try requested method, fallback to PCA if it fails
+        try:
+            reduced_embeddings = self._reduce_dimensions(embeddings, method, 3)
+        except Exception as e:
+            logger.warning(f"Interactive visualization reduction ({method}) failed: {e}. Falling back to PCA.")
+            reduced_embeddings = self._reduce_dimensions(embeddings, method="pca", n_components=3)
         
-        # Reduce to 3D
-        reduced_embeddings = self._reduce_dimensions(embeddings, method, 3)
-        
-        # Create DataFrame for easier plotting
         df = pd.DataFrame({
             'x': reduced_embeddings[:, 0],
             'y': reduced_embeddings[:, 1],
@@ -407,7 +422,6 @@ class EmbeddingVisualizer:
                           for i in range(len(identities))]
         })
         
-        # Create figure
         fig = go.Figure()
         
         # Add track embeddings
@@ -664,7 +678,6 @@ class EmbeddingVisualizer:
         }
         
         with open(output_path / "visualization_report.json", 'w') as f:
-            import json
             json.dump(full_report, f, indent=2, default=str)
         
         logger.info(f"✅ Comprehensive report created in {output_path}")

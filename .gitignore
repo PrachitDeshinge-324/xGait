@@ -72,4 +72,5 @@ Thumbs.db
 gallery_data/*
 gallery_analysis/*
 clustering_analysis/*
+visualization*/
 *.json
