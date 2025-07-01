@@ -557,7 +557,11 @@ class OfficialXGaitInference:
     Official XGait inference engine exactly matching Gait3D-Benchmark
     """
     
-    def __init__(self, model_path: Optional[str] = None, device: str = "cpu", num_classes: int = 3000):
+    def __init__(self, model_path: Optional[str] = None, device: str = None, num_classes: int = 3000):
+        if device is None:
+            from config import get_xgait_device
+            device = get_xgait_device()
+        
         self.device = device
         self.num_classes = num_classes
         
@@ -724,11 +728,15 @@ class OfficialXGaitInference:
 
 
 def create_official_xgait_inference(model_path: Optional[str] = None, 
-                                   device: str = "cpu", 
+                                   device: str = None, 
                                    num_classes: int = 3000) -> OfficialXGaitInference:
     """
     Create official XGait inference engine
     """
+    if device is None:
+        from config import get_xgait_device
+        device = get_xgait_device()
+    
     # Look for default model path
     if model_path is None:
         import os

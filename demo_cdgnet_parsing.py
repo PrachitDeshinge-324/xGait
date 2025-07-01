@@ -24,7 +24,11 @@ transform = transforms.Compose([
 input_tensor = transform(crop).unsqueeze(0)  # Shape: [1, 3, H, W]
 
 # --- Load model ---
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+from src.utils.device_utils import get_global_device
+
+device = get_global_device()
+print(f"🚀 Using device: {device}")
+
 model = Res_Deeplab(num_classes=NUM_CLASSES)
 # --- Remove 'module.' prefix if present in state dict ---
 state_dict = torch.load(WEIGHTS_PATH, map_location=device)

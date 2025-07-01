@@ -29,10 +29,11 @@ class PersonTracker:
     """
     def __init__(self, 
                  yolo_model_path: str = "weights/yolo11m.pt", 
-                 device: str = "mps",
+                 device: str = None,
                  config: TrackerConfig = None):
         
-        self.device = device
+        from config import get_global_device
+        self.device = device if device is not None else get_global_device()
         self.config = config or TrackerConfig()
         
         # Get device-specific configuration

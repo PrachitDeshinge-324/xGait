@@ -12,6 +12,15 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 from torch.autograd import Variable
 from pathlib import Path
+import sys
+
+# Add parent directory to path for imports
+current_dir = Path(__file__).parent
+src_dir = current_dir.parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
+
+from utils.device_utils import get_global_device
 
 # U²-Net Architecture Implementation
 class REBNCONV(nn.Module):
@@ -395,12 +404,12 @@ class U2NET(nn.Module):
 class HumanParsingModel:
     """Human Parsing Model using GaitParsing U²-Net implementation"""
     
-    def __init__(self, model_path='weights/parsing_u2net.pth', device='cpu'):
+    def __init__(self, model_path='weights/parsing_u2net.pth', device=None):
         self.input_height = 144
         self.input_width = 96
         self.transform = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         self.model_path = model_path
-        self.device = device
+        self.device = device if device is not None else get_global_device()
         
         # GaitParsing class definitions (7 classes for gait parsing)
         self.get_class_names = [

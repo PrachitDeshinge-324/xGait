@@ -7,13 +7,25 @@ from typing import Optional, Dict, Any
 import torch
 
 def get_device() -> str:
-    """Determine the device to use for PyTorch"""
+    """Determine the best available device for PyTorch"""
     if torch.cuda.is_available():
         return "cuda"
     elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
         return "mps"
     else:
         return "cpu"
+
+def get_global_device() -> str:
+    """Get the global device for all models"""
+    return get_device()
+
+def get_xgait_device() -> str:
+    """Get the appropriate device for XGait model (CPU when main device is MPS)"""
+    main_device = get_global_device()
+    if main_device == "mps":
+        return "cpu"  # XGait has MPS compatibility issues
+    else:
+        return main_device  # Use best available device (CUDA or CPU)
 
 def get_device_config(device: str) -> Dict[str, Any]:
     """Get device-specific configuration"""
@@ -50,10 +62,10 @@ class ModelConfig:
     xgait_model_path: str = "weights/Gait3D-XGait-120000.pt"
     parsing_model_path: str = "weights/parsing_u2net.pth"
     silhoutte_model_path: str = "weights/u2net_fixed.pth"
-    device: str = get_device()
+    device: str = get_global_device()
     
     # Model-specific device overrides for compatibility
-    xgait_device: str = "cpu"  # Force XGait to use CPU due to MPS compatibility issues
+    xgait_device: str = get_xgait_device()  # Use global device logic for XGait
     
     def __post_init__(self):
         """Initialize device-specific settings"""
@@ -63,7 +75,7 @@ class ModelConfig:
         self.use_compile = self.device_config["compile"]
         self.memory_format = self.device_config["memory_format"]
         
-        # XGait-specific configuration for CPU fallback
+        # XGait-specific configuration 
         self.xgait_config = get_device_config(self.xgait_device)
     
     def get_model_device(self, model_name: str) -> str:
@@ -125,7 +137,7 @@ class xgaitConfig:
 
     # Similarity threshold for identification - Further optimized for better matching
     similarity_threshold = 0.6  # Reduced from 0.7 to 0.6 for better person identification
-    device: str = "cuda"
+    device: str = get_xgait_device()  # Use global XGait device logic
 
 @dataclass
 class SystemConfig:

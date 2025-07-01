@@ -6,6 +6,24 @@ import numpy as np
 from typing import Union, Tuple, Any
 import cv2
 
+# Global device configuration functions
+def get_global_device() -> str:
+    """Get the best available device globally"""
+    if torch.cuda.is_available():
+        return "cuda"
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        return "mps"
+    else:
+        return "cpu"
+
+def get_xgait_device() -> str:
+    """Get the appropriate device for XGait (CPU when main device is MPS)"""
+    main_device = get_global_device()
+    if main_device == "mps":
+        return "cpu"  # XGait has MPS compatibility issues
+    else:
+        return main_device
+
 class DeviceManager:
     """Manages device-specific operations and optimizations"""
     

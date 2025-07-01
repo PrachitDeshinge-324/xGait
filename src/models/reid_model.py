@@ -64,8 +64,9 @@ class ReIDModel:
     """
     Main ReID model wrapper for person re-identification with device-aware optimization
     """
-    def __init__(self, device: str = "cpu", feature_dim: int = 256):
-        self.device = device
+    def __init__(self, device: str = None, feature_dim: int = 256):
+        from config import get_global_device
+        self.device = device if device is not None else get_global_device()
         self.feature_dim = feature_dim
         
         # Get device-specific configuration
@@ -171,14 +172,17 @@ class ReIDModel:
         
         return similarity
 
-def create_reid_model(device: str = "cpu") -> ReIDModel:
+def create_reid_model(device: str = None) -> ReIDModel:
     """
     Factory function to create a ReID model with device optimization
     
     Args:
-        device: Device to run the model on
+        device: Device to run the model on (uses global device if None)
         
     Returns:
         Initialized ReID model with device-specific optimizations
     """
+    from config import get_global_device
+    if device is None:
+        device = get_global_device()
     return ReIDModel(device=device)

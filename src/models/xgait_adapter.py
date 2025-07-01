@@ -7,8 +7,17 @@ import numpy as np
 import torch
 from typing import List, Optional, Dict, Tuple
 import logging
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+current_dir = Path(__file__).parent
+src_dir = current_dir.parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
 
 from .official_xgait_model import create_official_xgait_inference, OfficialXGaitInference
+from utils.device_utils import get_xgait_device
 
 logger = logging.getLogger(__name__)
 
@@ -19,16 +28,16 @@ class XGaitAdapter:
     Maintains compatibility with current API while using official implementation
     """
     
-    def __init__(self, model_path: Optional[str] = None, device: str = "cpu", num_classes: int = 3000):
+    def __init__(self, model_path: Optional[str] = None, device: str = None, num_classes: int = 3000):
         """
         Initialize XGait adapter with official implementation
         
         Args:
             model_path: Path to official XGait weights
-            device: Device for inference
+            device: Device for inference (uses global XGait device if None)
             num_classes: Number of identity classes (3000 for Gait3D)
         """
-        self.device = device
+        self.device = device if device is not None else get_xgait_device()
         self.num_classes = num_classes
         
         # Create official XGait model
@@ -238,23 +247,28 @@ class XGaitAdapter:
         return report
 
 
-def create_xgait_adapter(model_path: Optional[str] = None, device: str = "cpu", 
+def create_xgait_adapter(model_path: Optional[str] = None, device: str = None, 
                         num_classes: int = 3000) -> XGaitAdapter:
     """
     Create XGait adapter with official implementation
     Drop-in replacement for existing XGait inference
     """
+    if device is None:
+        device = get_xgait_device()
     return XGaitAdapter(model_path=model_path, device=device, num_classes=num_classes)
 
 
 # For backward compatibility - alias to existing function name
-def create_xgait_inference(model_path: Optional[str] = None, device: str = "cpu", 
+def create_xgait_inference(model_path: Optional[str] = None, device: str = None, 
                           num_classes: int = 100) -> XGaitAdapter:
     """
     Create XGait inference - now using official implementation
     
     Note: num_classes changed from 100 to 3000 to match Gait3D dataset
     """
+    if device is None:
+        device = get_xgait_device()
+        
     # Use 3000 classes to match official Gait3D configuration
     effective_num_classes = 3000 if num_classes == 100 else num_classes
     

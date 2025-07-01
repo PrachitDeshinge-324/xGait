@@ -17,18 +17,22 @@ else:
 logger = logging.getLogger(__name__)
 
 
-def create_xgait_inference(model_path: Optional[str] = None, device: str = "cpu", num_classes: int = 3000):
+def create_xgait_inference(model_path: Optional[str] = None, device: str = None, num_classes: int = 3000):
     """
     Create and return an XGait inference engine using the official implementation
     
     Args:
         model_path: Path to XGait model weights (Gait3D-XGait-120000.pt recommended)
-        device: Device to use for inference
+        device: Device to use for inference (uses XGait-specific device if None)
         num_classes: Number of identity classes (3000 for Gait3D)
         
     Returns:
         XGaitAdapter instance (using official XGait implementation)
     """
+    if device is None:
+        from config import get_xgait_device
+        device = get_xgait_device()
+    
     # Look for default model path in weights directory
     if model_path is None:
         current_dir = Path(__file__).parent.parent.parent

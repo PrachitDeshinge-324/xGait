@@ -13,6 +13,15 @@ import os
 from pathlib import Path
 from typing import List, Union, Optional, Tuple
 import logging
+import sys
+
+# Add parent directory to path for imports
+current_dir = Path(__file__).parent
+src_dir = current_dir.parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
+
+from utils.device_utils import get_global_device
 
 logger = logging.getLogger(__name__)
 
@@ -399,11 +408,11 @@ class U2NET(nn.Module):
 class SilhouetteExtractor:
     """Silhouette extraction using U²-Net model."""
     
-    def __init__(self, device='cpu'):
+    def __init__(self, device=None):
         """Initialize the silhouette extractor."""
-        self.device = device
+        self.device = device if device is not None else get_global_device()
         self.model = U2NET(in_ch=3, out_ch=1)
-        self.model.to(device)
+        self.model.to(self.device)
         self.model.eval()
         
         # Image preprocessing
@@ -532,6 +541,8 @@ class SilhouetteExtractor:
             'parameters': sum(p.numel() for p in self.model.parameters())
         }
 
-def create_silhouette_extractor(device='cpu', model_path=None):
+def create_silhouette_extractor(device=None, model_path=None):
     """Create and return a silhouette extractor instance."""
+    if device is None:
+        device = get_global_device()
     return SilhouetteExtractor(device=device)
