@@ -435,7 +435,8 @@ class SilhouetteExtractor:
         
         # Try different weight files in order of preference
         weight_files = [
-            "u2net_fixed.pth",    # Fixed weights (preferred)
+            # "u2net_human_seg.pth"
+            # "u2net_fixed.pth",    # Fixed weights (preferred)
             "u2net.pth"
         ]
         

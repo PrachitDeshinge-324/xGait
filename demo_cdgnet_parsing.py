@@ -41,7 +41,20 @@ if any(k.startswith('module.') for k in state_dict.keys()):
     state_dict = new_state_dict
 model.load_state_dict(state_dict)
 model.eval()
-model.to(device)
+
+# Handle device compatibility (especially MPS)
+try:
+    model.to(device)
+    # Test inference to check compatibility
+    test_input = torch.randn(1, 3, 256, 256).to(device)
+    with torch.no_grad():
+        _ = model(test_input)
+    print(f"✅ Model successfully loaded on {device}")
+except Exception as e:
+    print(f"⚠️  Device {device} incompatible: {e}")
+    print("   Falling back to CPU")
+    device = 'cpu'
+    model.to(device)
 
 # --- Inference ---
 with torch.no_grad():

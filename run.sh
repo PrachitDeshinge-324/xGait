@@ -1,0 +1,1 @@
+python main.py --input input/1c.mp4 --enable-gait --max-frames 900
