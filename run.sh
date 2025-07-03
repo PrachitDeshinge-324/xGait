@@ -1,1 +1,1 @@
-python main.py --input input/1c.mp4 --enable-gait --max-frames 900
+python main.py --input input/3c1.mp4 --enable-gait --max-frames 200 --save-video

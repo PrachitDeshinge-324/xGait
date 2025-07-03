@@ -16,21 +16,22 @@ import sys
 import traceback
 import os
 import numpy as np
-from collections import defaultdict
-from typing import List, Tuple, Dict, Optional
-import argparse
-import threading
-import queue
 import time
-from pathlib import Path
-from datetime import datetime
+import queue
+import threading
+import logging
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for thread safety
 import matplotlib.pyplot as plt
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import defaultdict
+from typing import List, Tuple, Dict, Optional
+from pathlib import Path
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
+import argparse
 
+# Add src to path for imports
 # Add src to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
@@ -112,8 +113,19 @@ class PersonTrackingApp:
         self.min_sequence_length = xgaitConfig.min_sequence_length   # Minimum frames needed for XGait extraction
         self.xgait_extraction_interval = xgaitConfig.xgait_extraction_interval  # Extract XGait features every N frames per track
         
-        # --- Simple Identity Gallery ---
-        self.simple_gallery = SimpleIdentityGallery(similarity_threshold=0.45)
+        # --- Enhanced Identity Gallery ---
+        # Features:
+        # • Stores multiple embeddings per person with quality scores
+        # • Uses stable prototypes for matching instead of single embeddings  
+        # • Intelligent updating that adds to collections rather than overwriting
+        # • Buffer management to prevent unlimited growth
+        # • Simplified API for easy integration
+        self.simple_gallery = SimpleIdentityGallery(
+            similarity_threshold=0.45,                    # Threshold for identity matching
+            max_gallery_embeddings_per_person=12,         # Buffer size per person
+            min_quality_threshold=0.25,                   # Quality filter
+            prototype_update_strategy="weighted_average"  # Prototype computation method
+        )
         self.track_embedding_buffer = defaultdict(list)  # track_id -> list of embeddings
         self.track_quality_buffer = defaultdict(list)    # track_id -> list of qualities
         self.track_to_person = {}  # track_id -> person_name
@@ -310,22 +322,29 @@ class PersonTrackingApp:
                         self._collect_parsing_results(frame_count)
                     self._update_statistics(tracking_results, frame_count)
                     # --- Simple identity assignment ---
-                    # Aggregate embeddings for each track after enough are collected
-                    for track_id in list(self.track_embedding_buffer.keys()):
-                        if len(self.track_embedding_buffer[track_id]) >= self.min_sequence_length and track_id not in self.track_to_person:
-                            person_name = self.simple_gallery.add_track_embeddings(
-                                track_id,
-                                self.track_embedding_buffer[track_id],
-                                self.track_quality_buffer[track_id]
-                            )
-                            self.track_to_person[track_id] = person_name
-                    # For current frame, assign identities to all tracks (no duplicate per frame)
+                    # Collect embeddings with qualities for current frame
                     frame_track_embeddings = {}
                     for track_id in [t[0] for t in tracking_results]:
                         # Use last embedding if available
                         if self.track_embedding_buffer[track_id]:
-                            frame_track_embeddings[track_id] = self.track_embedding_buffer[track_id][-1]
-                    frame_assignments = self.simple_gallery.assign_identities_for_frame(frame_track_embeddings, frame_count)
+                            last_embedding = self.track_embedding_buffer[track_id][-1]
+                            # Get corresponding quality (default to 0.5 if not available)
+                            last_quality = (self.track_quality_buffer[track_id][-1] 
+                                          if self.track_quality_buffer[track_id] else 0.5)
+                            frame_track_embeddings[track_id] = (last_embedding, last_quality)
+                    
+                    # Use the unified assignment method
+                    # --- Enhanced Gallery Identity Assignment ---
+                    # The SimpleIdentityGallery uses multiple embeddings per person with stable prototypes:
+                    # 1. Collects embeddings with quality scores for each track
+                    # 2. Matches against stable prototypes (not individual embeddings) 
+                    # 3. Intelligently updates existing persons by adding new embeddings
+                    # 4. Manages buffer size automatically (keeps best quality embeddings)
+                    # 5. Unified API handles both new person creation and existing person updates
+                    frame_assignments = self.simple_gallery.assign_or_update_identities(
+                        frame_track_embeddings, frame_count
+                    )
+                    
                     # Store for visualization
                     self.track_identities = {}
                     identification_results = {}
@@ -339,8 +358,27 @@ class PersonTrackingApp:
                         }
                         identification_results[track_id] = person_name
                         identification_confidence[track_id] = 1.0
+                    
                     gallery_stats = {'num_identities': len(self.simple_gallery.gallery)}
                     identification_stats = None
+                    
+                    # Periodic consolidation to keep gallery clean
+                    if frame_count % 500 == 0 and frame_count > 0:
+                        print(f"[SimpleGallery] Running periodic consolidation at frame {frame_count}")
+                        self.simple_gallery.debug_gallery_state("Before Periodic Consolidation")
+                        candidates = self.simple_gallery.get_consolidation_candidates(consolidation_threshold=0.85)
+                        print(f"[SimpleGallery] Consolidation candidates (threshold=0.85): {len(candidates)}")
+                        for person_a, person_b, sim in candidates:
+                            print(f"   {person_a} <-> {person_b}: {sim:.3f}")
+                        
+                        # Use smart consolidation for periodic cleanup too
+                        consolidated = self.simple_gallery.smart_consolidate_similar_persons(
+                            consolidation_threshold=0.85, min_embedding_overlap=2
+                        )
+                        if consolidated > 0:
+                            print(f"[SimpleGallery] Consolidated {consolidated} persons during periodic cleanup")
+                            self.simple_gallery.debug_gallery_state("After Periodic Consolidation")
+                    
                     # --- FPS calculation ---
                     now = time.time()
                     current_fps = 1.0 / max(now - last_frame_time, 1e-6)
@@ -393,6 +431,30 @@ class PersonTrackingApp:
         self.tracker.synchronize_device()
         # Save gallery at the end
         print(f"[SimpleGallery] Saving gallery to {simple_gallery_path}")
+        
+        # Run consolidation before saving
+        print("[SimpleGallery] Running final consolidation...")
+        self.simple_gallery.debug_gallery_state("Before Final Consolidation")
+        candidates = self.simple_gallery.get_consolidation_candidates(consolidation_threshold=0.80)
+        print(f"[SimpleGallery] Final consolidation candidates (threshold=0.80): {len(candidates)}")
+        for person_a, person_b, sim in candidates:
+            print(f"   {person_a} <-> {person_b}: {sim:.3f}")
+        
+        # Use smart consolidation for more conservative merging
+        consolidated_count = self.simple_gallery.smart_consolidate_similar_persons(
+            consolidation_threshold=0.92, min_embedding_overlap=3
+        )
+        self.simple_gallery.debug_gallery_state("After Final Consolidation")
+        
+        # Print gallery statistics
+        gallery_summary = self.simple_gallery.get_gallery_summary()
+        print(f"[SimpleGallery] Final Gallery Statistics:")
+        print(f"  • Total persons: {gallery_summary['num_persons']}")
+        print(f"  • Total embeddings processed: {gallery_summary['total_embeddings_added']}")
+        print(f"  • Prototype updates: {gallery_summary['prototype_updates']}")
+        print(f"  • Average embeddings per person: {gallery_summary['average_embeddings_per_person']:.1f}")
+        print(f"  • Persons consolidated: {consolidated_count}")
+        
         self.simple_gallery.save_gallery(simple_gallery_path)
         self.config.verbose = verbose
         # --- Embedding Visualization ---
@@ -859,7 +921,7 @@ class PersonTrackingApp:
                     frame_features.append(feats[-1])
                     frame_track_ids.append(t_id)
             gallery_names = list(self.simple_gallery.gallery.keys())
-            gallery_embs = [self.simple_gallery.gallery[name] for name in gallery_names]
+            gallery_embs = [self.simple_gallery.gallery[name].prototype for name in gallery_names]
             sim_ax = axes[4, 0]
             if frame_features and gallery_embs:
                 sims = cosine_similarity(frame_features, gallery_embs)
