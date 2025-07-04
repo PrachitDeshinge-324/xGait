@@ -11,10 +11,43 @@ Features:
 - Real-time visualization and statistics
 """
 
+import warnings
+import os
+import contextlib
+import sys
+
+# Suppress specific warnings
+warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
+warnings.filterwarnings('ignore', category=UserWarning, module='umap')
+warnings.filterwarnings('ignore', message='n_jobs value .* overridden to 1 by setting random_state')
+
+# Set OpenMP environment variable to suppress OMP warnings
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+# Suppress OpenMP deprecation warnings
+os.environ['OMP_MAX_ACTIVE_LEVELS'] = '1'
+os.environ.pop('OMP_NESTED', None)  # Remove if exists
+
+# Force unbuffered output for real-time progress display
+os.environ['PYTHONUNBUFFERED'] = '1'
+
+# Context manager to suppress stdout warnings
+@contextlib.contextmanager
+def suppress_stdout():
+    with open(os.devnull, "w") as devnull:
+        old_stdout = sys.stdout
+        sys.stdout = devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+
 import cv2
 import sys
 import traceback
-import os
 import numpy as np
 import time
 import queue
@@ -31,7 +64,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import argparse
 
-# Add src to path for imports
 # Add src to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
@@ -122,7 +154,7 @@ class PersonTrackingApp:
         # • Simplified API for easy integration
         self.simple_gallery = SimpleIdentityGallery(
             similarity_threshold=0.45,                    # Threshold for identity matching
-            max_gallery_embeddings_per_person=12,         # Buffer size per person
+            max_embeddings_per_person=12,         # Buffer size per person
             min_quality_threshold=0.25,                   # Quality filter
             prototype_update_strategy="weighted_average"  # Prototype computation method
         )
@@ -301,12 +333,22 @@ class PersonTrackingApp:
         simple_gallery_path = Path("visualization_analysis") / "simple_gallery.json"
         if simple_gallery_path.exists():
             print(f"[SimpleGallery] Loading gallery from {simple_gallery_path}")
-            self.simple_gallery.load_gallery(simple_gallery_path)
+            # Clear track associations to ensure track independence between videos
+            self.simple_gallery.load_gallery(simple_gallery_path, clear_track_associations=True)
             self.gallery_loaded = True
+            print(f"[SimpleGallery] Loaded {len(self.simple_gallery.gallery)} known persons")
+            print(f"[SimpleGallery] Track associations cleared for video independence")
         
-        with tqdm(total=pbar_total, desc="Processing frames", unit="frame") as pbar:
+        with tqdm(total=pbar_total, desc="Processing frames", unit="frame", 
+                  disable=False, dynamic_ncols=True, smoothing=0.01, 
+                  mininterval=0.01, maxinterval=0.1, file=sys.stdout, 
+                  ascii=False, colour='green') as pbar:
+            
             while cap.isOpened():
-                if not paused:
+                # Only pause if display window is enabled and user pressed space
+                should_pause = paused and self.config.video.display_window
+                
+                if not should_pause:
                     success, frame = cap.read()
                     if not success:
                         break
@@ -362,22 +404,12 @@ class PersonTrackingApp:
                     gallery_stats = {'num_identities': len(self.simple_gallery.gallery)}
                     identification_stats = None
                     
-                    # Periodic consolidation to keep gallery clean
+                    # Periodic consolidation to keep gallery clean - REMOVED
+                    # Now just collect all embeddings per track without merging
                     if frame_count % 500 == 0 and frame_count > 0:
-                        print(f"[SimpleGallery] Running periodic consolidation at frame {frame_count}")
-                        self.simple_gallery.debug_gallery_state("Before Periodic Consolidation")
-                        candidates = self.simple_gallery.get_consolidation_candidates(consolidation_threshold=0.85)
-                        print(f"[SimpleGallery] Consolidation candidates (threshold=0.85): {len(candidates)}")
-                        for person_a, person_b, sim in candidates:
-                            print(f"   {person_a} <-> {person_b}: {sim:.3f}")
-                        
-                        # Use smart consolidation for periodic cleanup too
-                        consolidated = self.simple_gallery.smart_consolidate_similar_persons(
-                            consolidation_threshold=0.85, min_embedding_overlap=2
-                        )
-                        if consolidated > 0:
-                            print(f"[SimpleGallery] Consolidated {consolidated} persons during periodic cleanup")
-                            self.simple_gallery.debug_gallery_state("After Periodic Consolidation")
+                        print(f"[SimpleGallery] Track summary at frame {frame_count}")
+                        self.simple_gallery.debug_gallery_state("Interim Track Summary")
+                        # No consolidation, just monitoring
                     
                     # --- FPS calculation ---
                     now = time.time()
@@ -407,13 +439,31 @@ class PersonTrackingApp:
                         cv2.imshow("Person Tracking & XGait Analysis", annotated_frame)
                     if frame_count % 500 == 0:
                         self.tracker.clear_memory_cache()
+                    
+                    # Update progress bar after processing each frame
                     pbar.update(1)
+                    
+                    # Force immediate display of progress every 5 frames (more efficient)
+                    if frame_count % 5 == 0:
+                        pbar.refresh()
+                        sys.stdout.flush()
+                    
+                    # Update progress bar description with FPS info every 10 frames
+                    if frame_count % 10 == 0:
+                        pbar.set_description(f"Processing frames (FPS: {current_fps:.1f})")
+                        pbar.refresh()
+                        sys.stdout.flush()  # Force immediate display
+                
+                # Handle display window and user input
                 if self.config.video.display_window:
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord('q'):
                         break
                     elif key == ord(' '):
                         paused = not paused
+                else:
+                    # When display is off, add small delay to prevent excessive CPU usage
+                    time.sleep(0.001)
         cap.release()
         if self.config.video.display_window:
             cv2.destroyAllWindows()
@@ -432,19 +482,34 @@ class PersonTrackingApp:
         # Save gallery at the end
         print(f"[SimpleGallery] Saving gallery to {simple_gallery_path}")
         
-        # Run consolidation before saving
-        print("[SimpleGallery] Running final consolidation...")
-        self.simple_gallery.debug_gallery_state("Before Final Consolidation")
-        candidates = self.simple_gallery.get_consolidation_candidates(consolidation_threshold=0.80)
-        print(f"[SimpleGallery] Final consolidation candidates (threshold=0.80): {len(candidates)}")
-        for person_a, person_b, sim in candidates:
-            print(f"   {person_a} <-> {person_b}: {sim:.3f}")
+        # Removed automated consolidation - now collect all embeddings per track
+        print("[SimpleGallery] Collecting embeddings per track (no auto-consolidation)")
+        self.simple_gallery.debug_gallery_state("Before Manual Track Naming")
         
-        # Use smart consolidation for more conservative merging
-        consolidated_count = self.simple_gallery.smart_consolidate_similar_persons(
-            consolidation_threshold=0.92, min_embedding_overlap=3
-        )
-        self.simple_gallery.debug_gallery_state("After Final Consolidation")
+        # Show summary of automatic identification vs new persons
+        print(f"\n📊 Person Identification Summary:")
+        known_persons = set()
+        new_tracks = []
+        for track_id in self.track_embedding_buffer.keys():
+            # Check if track is assigned to a person in the gallery
+            assigned_person = self.simple_gallery.track_to_person.get(track_id)
+            if assigned_person and assigned_person in self.simple_gallery.gallery:
+                known_persons.add(assigned_person)
+                print(f"   ✅ Track {track_id} automatically identified as: {assigned_person}")
+            else:
+                new_tracks.append(track_id)
+                print(f"   🆕 Track {track_id} is NEW (will need naming)")
+        
+        print(f"\n📋 Final Summary:")
+        print(f"   • Known persons automatically identified: {len(known_persons)}")
+        print(f"   • New persons requiring naming: {len(new_tracks)}")
+        
+        if len(new_tracks) == 0:
+            print(f"   🎉 All persons were automatically identified! No manual naming needed.")
+        
+        # Display sample photos and ask for track names (only for NEW persons)
+        consolidated_count = self._manual_track_naming()
+        self.simple_gallery.debug_gallery_state("After Manual Track Naming")
         
         # Print gallery statistics
         gallery_summary = self.simple_gallery.get_gallery_summary()
@@ -453,7 +518,7 @@ class PersonTrackingApp:
         print(f"  • Total embeddings processed: {gallery_summary['total_embeddings_added']}")
         print(f"  • Prototype updates: {gallery_summary['prototype_updates']}")
         print(f"  • Average embeddings per person: {gallery_summary['average_embeddings_per_person']:.1f}")
-        print(f"  • Persons consolidated: {consolidated_count}")
+        print(f"  • Tracks manually merged: {consolidated_count}")
         
         self.simple_gallery.save_gallery(simple_gallery_path)
         self.config.verbose = verbose
@@ -987,5 +1052,29 @@ class PersonTrackingApp:
             for track_id, info in self.track_identities.items():
                 is_new_identity[track_id] = info.get('is_new', False)
         return is_new_identity
+    
+    def _manual_track_naming(self) -> int:
+        """
+        Manual track naming using the new interactive interface.
+        
+        Returns:
+            Number of tracks merged
+        """
+        from src.utils.track_naming_interface import InteractiveTrackNaming
+        
+        # Create the interactive naming interface
+        naming_interface = InteractiveTrackNaming(
+            simple_gallery=self.simple_gallery,
+            track_history=self.track_history,
+            track_embedding_buffer=self.track_embedding_buffer,
+            track_quality_buffer=self.track_quality_buffer,
+            debug_output_dir=self.debug_output_dir if hasattr(self, 'debug_output_dir') else Path("debug_gait_parsing"),
+            video_path=self.config.video.input_path
+        )
+        
+        # Run the interactive naming process
+        merged_count = naming_interface.run_interactive_naming()
+        
+        return merged_count
 
 

@@ -73,4 +73,6 @@ gallery_data/*
 gallery_analysis/*
 clustering_analysis/*
 visualization*/
+track_naming_results/
+track_samples/
 *.json

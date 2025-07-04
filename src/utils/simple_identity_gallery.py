@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from datetime import datetime
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -58,24 +59,35 @@ class SimpleIdentityGallery:
     - Simplified API for easy integration
     """
     
-    def __init__(self, 
-                 similarity_threshold: float = 0.7,
-                 max_gallery_embeddings_per_person: int = 15,
-                 min_quality_threshold: float = 0.3,
-                 prototype_update_strategy: str = "weighted_average"):
+    def __init__(self, similarity_threshold: float = 0.7, min_quality_threshold: float = 0.3, 
+                 max_embeddings_per_person: int = 20, prototype_update_strategy: str = "weighted_average",
+                 identity_config: Optional[Any] = None):
         """
-        Initialize the enhanced identity gallery
+        Initialize the SimpleIdentityGallery
         
         Args:
-            similarity_threshold: Minimum similarity for identity matching
-            max_gallery_embeddings_per_person: Maximum embeddings to store per person
-            min_quality_threshold: Minimum quality for accepting embeddings
-            prototype_update_strategy: Strategy for updating prototypes ("weighted_average", "best_quality", "recent_average")
+            similarity_threshold: Minimum similarity for person matching
+            min_quality_threshold: Minimum quality threshold for embeddings
+            max_embeddings_per_person: Maximum embeddings to store per person
+            prototype_update_strategy: Strategy for updating prototypes
+            identity_config: IdentityConfig object for advanced configuration
         """
-        self.similarity_threshold = similarity_threshold
-        self.max_gallery_embeddings_per_person = max_gallery_embeddings_per_person
-        self.min_quality_threshold = min_quality_threshold
-        self.prototype_update_strategy = prototype_update_strategy
+        # Use config if provided, otherwise use individual parameters
+        if identity_config:
+            self.similarity_threshold = identity_config.similarity_threshold
+            self.min_quality_threshold = identity_config.min_quality_threshold
+            self.max_embeddings_per_person = identity_config.max_embeddings_per_person
+            self.prototype_update_strategy = identity_config.prototype_update_strategy
+            self.min_embeddings_for_stable_prototype = identity_config.min_embeddings_for_stable_prototype
+            self.high_confidence_threshold = identity_config.high_confidence_threshold
+        else:
+            # Use individual parameters for backward compatibility
+            self.similarity_threshold = similarity_threshold
+            self.min_quality_threshold = min_quality_threshold
+            self.max_embeddings_per_person = max_embeddings_per_person
+            self.prototype_update_strategy = prototype_update_strategy
+            self.min_embeddings_for_stable_prototype = 3
+            self.high_confidence_threshold = 0.85
         
         self.person_counter = 1
         self.gallery: Dict[str, PersonData] = {}  # person_name -> PersonData
@@ -90,7 +102,7 @@ class SimpleIdentityGallery:
         
         logger.info(f"✅ Enhanced Identity Gallery initialized")
         logger.info(f"   Similarity threshold: {similarity_threshold}")
-        logger.info(f"   Max embeddings per person: {max_gallery_embeddings_per_person}")
+        logger.info(f"   Max embeddings per person: {max_embeddings_per_person}")
         logger.info(f"   Prototype strategy: {prototype_update_strategy}")
 
     def _generate_person_name(self) -> str:
@@ -150,7 +162,7 @@ class SimpleIdentityGallery:
         person_data = self.gallery[person_name]
         
         # Check if we need to make room (remove lowest quality embedding)
-        if len(person_data.embeddings) >= self.max_gallery_embeddings_per_person:
+        if len(person_data.embeddings) >= self.max_embeddings_per_person:
             # Find and remove the embedding with lowest quality
             min_quality_idx = int(np.argmin(person_data.qualities))
             removed_quality = person_data.qualities[min_quality_idx]  # Store before removal
@@ -267,11 +279,19 @@ class SimpleIdentityGallery:
                 self.track_to_person[track_id] = best_person
                 logger.debug(f"Matched track {track_id} to existing person {best_person} (similarity: {best_similarity:.3f})")
             else:
-                # Create new person
-                new_person = self._create_new_person(embedding, quality, track_id)
-                assigned[track_id] = new_person
-                used_persons.add(new_person)
-                logger.debug(f"Created new person for track {track_id}: {new_person}")
+                # DO NOT create new person automatically - let manual naming handle it
+                # Just skip assignment for now - manual naming will handle new persons
+                logger.debug(f"No match found for track {track_id} (best similarity: {best_similarity:.3f}) - will need manual naming")
+                continue
+                self.unassigned_track_qualities[track_id].append(quality)
+                
+                # Keep only recent embeddings to prevent memory bloat
+                max_unassigned = 20
+                if len(self.unassigned_track_embeddings[track_id]) > max_unassigned:
+                    self.unassigned_track_embeddings[track_id].pop(0)
+                    self.unassigned_track_qualities[track_id].pop(0)
+                
+                logger.debug(f"Track {track_id} has no match above threshold {self.similarity_threshold:.3f} (best: {best_similarity:.3f}) - storing for manual naming")
         
         return assigned
 
@@ -345,7 +365,7 @@ class SimpleIdentityGallery:
                 'new_person_creations': self.new_person_creations,
                 'person_counter': self.person_counter,
                 'similarity_threshold': self.similarity_threshold,
-                'max_gallery_embeddings_per_person': self.max_gallery_embeddings_per_person,
+                'max_embeddings_per_person': self.max_embeddings_per_person,
                 'prototype_update_strategy': self.prototype_update_strategy
             }
         }
@@ -355,8 +375,15 @@ class SimpleIdentityGallery:
         
         logger.info(f"💾 Gallery saved to {filepath} ({len(self.gallery)} persons)")
 
-    def load_gallery(self, filepath: str):
-        """Load gallery with all person data from a JSON file"""
+    def load_gallery(self, filepath: str, clear_track_associations: bool = True):
+        """
+        Load gallery with all person data from a JSON file
+        
+        Args:
+            filepath: Path to the gallery JSON file
+            clear_track_associations: If True, clears track associations to ensure 
+                                    track independence between videos
+        """
         with open(filepath, 'r') as f:
             data = json.load(f)
         
@@ -368,13 +395,19 @@ class SimpleIdentityGallery:
         # Load persons
         for person_name, person_dict in data['persons'].items():
             person_data = PersonData.from_dict(person_dict)
-            self.gallery[person_name] = person_data
             
-            # Rebuild track mappings from most recent track association
-            if person_data.track_associations:
-                recent_track = person_data.track_associations[-1]
-                self.track_to_person[recent_track] = person_name
-                self.person_to_track[person_name] = recent_track
+            if clear_track_associations:
+                # Clear track associations to ensure track independence between videos
+                person_data.track_associations = []
+                logger.info(f"🔄 Cleared track associations for {person_name} (track independence)")
+            else:
+                # Rebuild track mappings from most recent track association
+                if person_data.track_associations:
+                    recent_track = person_data.track_associations[-1]
+                    self.track_to_person[recent_track] = person_name
+                    self.person_to_track[person_name] = recent_track
+            
+            self.gallery[person_name] = person_data
         
         # Load metadata
         if 'metadata' in data:
@@ -385,7 +418,7 @@ class SimpleIdentityGallery:
             self.person_counter = metadata.get('person_counter', 1)
             # Update thresholds if they were saved
             self.similarity_threshold = metadata.get('similarity_threshold', self.similarity_threshold)
-            self.max_gallery_embeddings_per_person = metadata.get('max_gallery_embeddings_per_person', self.max_gallery_embeddings_per_person)
+            self.max_embeddings_per_person = metadata.get('max_embeddings_per_person', self.max_embeddings_per_person)
             self.prototype_update_strategy = metadata.get('prototype_update_strategy', self.prototype_update_strategy)
         
         # Ensure person_counter is correct
@@ -522,9 +555,9 @@ class SimpleIdentityGallery:
                     person_a_data.update_count += person_b_data.update_count
                     
                     # Trim to max size if needed
-                    if len(person_a_data.embeddings) > self.max_gallery_embeddings_per_person:
+                    if len(person_a_data.embeddings) > self.max_embeddings_per_person:
                         # Keep the best embeddings
-                        indices = np.argsort(person_a_data.qualities)[::-1][:self.max_gallery_embeddings_per_person]
+                        indices = np.argsort(person_a_data.qualities)[::-1][:self.max_embeddings_per_person]
                         person_a_data.embeddings = [person_a_data.embeddings[i] for i in indices]
                         person_a_data.qualities = [person_a_data.qualities[i] for i in indices]
                     
@@ -667,8 +700,8 @@ class SimpleIdentityGallery:
                     person_a_data.update_count += person_b_data.update_count
                     
                     # Trim to max size if needed
-                    if len(person_a_data.embeddings) > self.max_gallery_embeddings_per_person:
-                        indices = np.argsort(person_a_data.qualities)[::-1][:self.max_gallery_embeddings_per_person]
+                    if len(person_a_data.embeddings) > self.max_embeddings_per_person:
+                        indices = np.argsort(person_a_data.qualities)[::-1][:self.max_embeddings_per_person]
                         person_a_data.embeddings = [person_a_data.embeddings[i] for i in indices]
                         person_a_data.qualities = [person_a_data.qualities[i] for i in indices]
                     
@@ -694,3 +727,316 @@ class SimpleIdentityGallery:
             logger.info(f"✅ SMART consolidated {consolidated_count} persons. Remaining: {len(self.gallery)}")
         
         return consolidated_count
+
+    def create_person_from_manual_naming(self, track_id: int, person_name: str) -> bool:
+        """
+        Create a new person from manual naming using stored unassigned embeddings
+        
+        Args:
+            track_id: Track ID to create person for
+            person_name: User-provided name for the person
+            
+        Returns:
+            True if person was created successfully, False otherwise
+        """
+        if not hasattr(self, 'unassigned_track_embeddings'):
+            logger.warning(f"No unassigned embeddings found for track {track_id}")
+            return False
+            
+        if track_id not in self.unassigned_track_embeddings or not self.unassigned_track_embeddings[track_id]:
+            logger.warning(f"No stored embeddings found for track {track_id}")
+            return False
+        
+        # Get stored embeddings and qualities
+        embeddings = self.unassigned_track_embeddings[track_id]
+        qualities = self.unassigned_track_qualities.get(track_id, [0.5] * len(embeddings))
+        
+        # Create person with the best quality embedding as prototype
+        if qualities:
+            best_idx = np.argmax(qualities)
+            best_embedding = embeddings[best_idx]
+            best_quality = qualities[best_idx]
+        else:
+            best_embedding = embeddings[0]
+            best_quality = 0.5
+        
+        # Create person data
+        person_data = PersonData(
+            person_name=person_name,
+            prototype=best_embedding.copy(),
+            embeddings=[emb.copy() for emb in embeddings],
+            qualities=qualities.copy(),
+            track_associations=[track_id],
+            creation_time=datetime.now(),
+            last_update=datetime.now(),
+            update_count=len(embeddings)
+        )
+        
+        # Add to gallery
+        self.gallery[person_name] = person_data
+        self.track_to_person[track_id] = person_name
+        self.person_to_track[person_name] = track_id
+        
+        # Clean up unassigned embeddings
+        del self.unassigned_track_embeddings[track_id]
+        if track_id in self.unassigned_track_qualities:
+            del self.unassigned_track_qualities[track_id]
+        
+        # Update statistics
+        self.total_embeddings_added += len(embeddings)
+        self.new_person_creations += 1
+        
+        logger.info(f"✅ Created person '{person_name}' for track {track_id} with {len(embeddings)} embeddings")
+        return True
+    
+    def create_person_from_track(self, person_name: str, track_id: int, 
+                                embeddings: List[np.ndarray], qualities: List[float]) -> None:
+        """
+        Create a new person with user-provided name from track data
+        
+        Args:
+            person_name: User-provided name for the person
+            track_id: Track ID to associate with this person
+            embeddings: List of embeddings for this track
+            qualities: List of quality scores for the embeddings
+        """
+        if not embeddings:
+            logger.warning(f"Cannot create person {person_name} - no embeddings provided")
+            return
+        
+        # Create prototype from all embeddings
+        prototype = self._compute_prototype(embeddings, qualities)
+        
+        person_data = PersonData(
+            person_name=person_name,
+            prototype=prototype,
+            embeddings=embeddings.copy(),
+            qualities=qualities.copy(),
+            track_associations=[track_id],
+            creation_time=datetime.now(),
+            last_update=datetime.now(),
+            update_count=len(embeddings)
+        )
+        
+        self.gallery[person_name] = person_data
+        self.track_to_person[track_id] = person_name
+        self.person_to_track[person_name] = track_id
+        
+        self.total_embeddings_added += len(embeddings)
+        self.new_person_creations += 1
+        
+        logger.info(f"🆕 Created person '{person_name}' from track {track_id} with {len(embeddings)} embeddings")
+    
+    def get_comprehensive_stats(self) -> Dict[str, Any]:
+        """
+        Get comprehensive statistics about the gallery
+        
+        Returns:
+            Dictionary containing detailed statistics
+        """
+        stats = {
+            'gallery_overview': {
+                'total_persons': len(self.gallery),
+                'total_embeddings': sum(len(person.embeddings) for person in self.gallery.values()),
+                'total_tracks_associated': len(self.track_to_person),
+                'avg_embeddings_per_person': 0.0,
+                'avg_quality_score': 0.0,
+            },
+            'persons_detail': {},
+            'quality_distribution': {
+                'high_quality': 0,  # > 0.8
+                'medium_quality': 0,  # 0.5 - 0.8
+                'low_quality': 0,  # < 0.5
+            },
+            'embedding_statistics': {
+                'min_embeddings': float('inf'),
+                'max_embeddings': 0,
+                'total_embeddings_added': self.total_embeddings_added,
+                'new_person_creations': self.new_person_creations,
+                'person_updates': self.prototype_updates,
+            },
+            'track_statistics': {
+                'active_tracks': len(self.track_to_person),
+                'unassigned_tracks': 0,
+            }
+        }
+        
+        if not self.gallery:
+            return stats
+        
+        # Calculate detailed statistics
+        total_embeddings = 0
+        total_quality = 0
+        quality_counts = {'high': 0, 'medium': 0, 'low': 0}
+        
+        for person_name, person_data in self.gallery.items():
+            num_embeddings = len(person_data.embeddings)
+            avg_quality = np.mean(person_data.qualities) if person_data.qualities else 0.0
+            
+            # Update person details
+            stats['persons_detail'][person_name] = {
+                'num_embeddings': num_embeddings,
+                'avg_quality': avg_quality,
+                'creation_time': person_data.creation_time.isoformat(),
+                'last_update': person_data.last_update.isoformat(),
+                'update_count': person_data.update_count,
+                'associated_tracks': person_data.track_associations,
+            }
+            
+            # Update aggregated statistics
+            total_embeddings += num_embeddings
+            total_quality += avg_quality * num_embeddings
+            
+            # Update quality distribution
+            for quality in person_data.qualities:
+                if quality > 0.8:
+                    quality_counts['high'] += 1
+                elif quality > 0.5:
+                    quality_counts['medium'] += 1
+                else:
+                    quality_counts['low'] += 1
+            
+            # Update embedding statistics
+            stats['embedding_statistics']['min_embeddings'] = min(
+                stats['embedding_statistics']['min_embeddings'], num_embeddings
+            )
+            stats['embedding_statistics']['max_embeddings'] = max(
+                stats['embedding_statistics']['max_embeddings'], num_embeddings
+            )
+        
+        # Calculate averages
+        stats['gallery_overview']['avg_embeddings_per_person'] = total_embeddings / len(self.gallery)
+        stats['gallery_overview']['avg_quality_score'] = total_quality / total_embeddings if total_embeddings > 0 else 0.0
+        
+        # Update quality distribution
+        stats['quality_distribution']['high_quality'] = quality_counts['high']
+        stats['quality_distribution']['medium_quality'] = quality_counts['medium']
+        stats['quality_distribution']['low_quality'] = quality_counts['low']
+        
+        # Fix min_embeddings if no persons
+        if stats['embedding_statistics']['min_embeddings'] == float('inf'):
+            stats['embedding_statistics']['min_embeddings'] = 0
+        
+        return stats
+    
+    def print_comprehensive_report(self) -> None:
+        """Print a comprehensive report of the gallery statistics"""
+        stats = self.get_comprehensive_stats()
+        
+        print("\n" + "="*60)
+        print("🎭 PERSON IDENTIFICATION GALLERY REPORT")
+        print("="*60)
+        
+        # Gallery overview
+        overview = stats['gallery_overview']
+        print(f"📊 Gallery Overview:")
+        print(f"   • Total Persons: {overview['total_persons']}")
+        print(f"   • Total Embeddings: {overview['total_embeddings']}")
+        print(f"   • Active Track Associations: {overview['total_tracks_associated']}")
+        print(f"   • Avg Embeddings per Person: {overview['avg_embeddings_per_person']:.1f}")
+        print(f"   • Avg Quality Score: {overview['avg_quality_score']:.3f}")
+        
+        # Quality distribution
+        quality = stats['quality_distribution']
+        print(f"\n📈 Quality Distribution:")
+        print(f"   • High Quality (>0.8): {quality['high_quality']}")
+        print(f"   • Medium Quality (0.5-0.8): {quality['medium_quality']}")
+        print(f"   • Low Quality (<0.5): {quality['low_quality']}")
+        
+        # Embedding statistics
+        emb_stats = stats['embedding_statistics']
+        print(f"\n🔢 Embedding Statistics:")
+        print(f"   • Min Embeddings per Person: {emb_stats['min_embeddings']}")
+        print(f"   • Max Embeddings per Person: {emb_stats['max_embeddings']}")
+        print(f"   • Total Embeddings Added: {emb_stats['total_embeddings_added']}")
+        print(f"   • New Person Creations: {emb_stats['new_person_creations']}")
+        print(f"   • Person Updates: {emb_stats['person_updates']}")
+        
+        # Individual person details
+        if stats['persons_detail']:
+            print(f"\n👥 Individual Person Details:")
+            for person_name, details in stats['persons_detail'].items():
+                print(f"   • {person_name}:")
+                print(f"     - Embeddings: {details['num_embeddings']}")
+                print(f"     - Avg Quality: {details['avg_quality']:.3f}")
+                print(f"     - Updates: {details['update_count']}")
+                print(f"     - Associated Tracks: {details['associated_tracks']}")
+        
+        print("="*60)
+    
+    def backup_gallery(self, backup_path: Optional[str] = None) -> str:
+        """
+        Create a backup of the current gallery
+        
+        Args:
+            backup_path: Optional custom backup path
+            
+        Returns:
+            Path to the backup file
+        """
+        if backup_path is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = f"visualization_analysis/simple_gallery_backup_{timestamp}.json"
+        
+        # Create backup directory if it doesn't exist
+        backup_dir = Path(backup_path).parent
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save current gallery to backup location
+        self.save_gallery(backup_path)
+        
+        logger.info(f"Gallery backed up to: {backup_path}")
+        return backup_path
+    
+    def restore_gallery(self, backup_path: str, clear_track_associations: bool = True) -> bool:
+        """
+        Restore gallery from a backup file
+        
+        Args:
+            backup_path: Path to the backup file
+            clear_track_associations: Whether to clear track associations
+            
+        Returns:
+            True if restoration was successful
+        """
+        try:
+            if not Path(backup_path).exists():
+                logger.error(f"Backup file not found: {backup_path}")
+                return False
+            
+            # Load from backup
+            self.load_gallery(backup_path, clear_track_associations)
+            logger.info(f"Gallery restored from: {backup_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to restore gallery from {backup_path}: {e}")
+            return False
+    
+    def cleanup_old_backups(self, backup_dir: str = "visualization_analysis", 
+                           keep_last_n: int = 5) -> List[str]:
+        """
+        Clean up old backup files, keeping only the most recent ones
+        
+        Args:
+            backup_dir: Directory containing backup files
+            keep_last_n: Number of recent backups to keep
+            
+        Returns:
+            List of deleted backup files
+        """
+        backup_pattern = "simple_gallery_backup_*.json"
+        backup_files = sorted(Path(backup_dir).glob(backup_pattern))
+        
+        deleted_files = []
+        if len(backup_files) > keep_last_n:
+            files_to_delete = backup_files[:-keep_last_n]
+            for file_path in files_to_delete:
+                try:
+                    file_path.unlink()
+                    deleted_files.append(str(file_path))
+                    logger.info(f"Deleted old backup: {file_path}")
+                except Exception as e:
+                    logger.error(f"Failed to delete backup {file_path}: {e}")
+        
+        return deleted_files

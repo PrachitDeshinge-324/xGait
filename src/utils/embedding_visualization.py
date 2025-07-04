@@ -2,6 +2,24 @@
 Embedding Visualization System for XGait Person Identification
 Provides comprehensive visualization of gait feature embeddings and identity clusters
 """
+import warnings
+import os
+
+# Suppress specific warnings
+warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
+warnings.filterwarnings('ignore', category=UserWarning, module='umap')
+warnings.filterwarnings('ignore', message='n_jobs value .* overridden to 1 by setting random_state')
+
+# Set OpenMP environment variable to suppress OMP warnings
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+# Suppress OpenMP deprecation warnings
+os.environ['OMP_MAX_ACTIVE_LEVELS'] = '1'
+os.environ.pop('OMP_NESTED', None)  # Remove if exists
+
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -130,10 +148,21 @@ class EmbeddingVisualizer:
                 self.pca_model = PCA(n_components=n_components, random_state=self.random_state)
             reduced = self.pca_model.fit_transform(embeddings)
         elif method == "tsne":
-            perplexity = min(30, max(2, embeddings.shape[0] // 3))
-            if self.tsne_model is None or self.tsne_model.n_components != n_components:
-                self.tsne_model = TSNE(n_components=n_components, random_state=self.random_state, perplexity=perplexity)
-            reduced = self.tsne_model.fit_transform(embeddings)
+            # Check if we have enough samples for t-SNE
+            n_samples = embeddings.shape[0]
+            perplexity = min(30, max(2, n_samples // 3))
+            
+            if n_samples <= perplexity:
+                logger.warning(f"Not enough samples for t-SNE (n_samples={n_samples}, perplexity={perplexity}). Falling back to PCA.")
+                return self._reduce_dimensions(embeddings, method="pca", n_components=n_components)
+            
+            try:
+                if self.tsne_model is None or self.tsne_model.n_components != n_components:
+                    self.tsne_model = TSNE(n_components=n_components, random_state=self.random_state, perplexity=perplexity)
+                reduced = self.tsne_model.fit_transform(embeddings)
+            except Exception as e:
+                logger.warning(f"Dimensionality reduction (tsne) failed: {e}. Falling back to PCA.")
+                return self._reduce_dimensions(embeddings, method="pca", n_components=n_components)
         elif method == "umap":
             if not UMAP_AVAILABLE:
                 logger.warning("UMAP not available, falling back to PCA.")
@@ -144,7 +173,13 @@ class EmbeddingVisualizer:
                 logger.warning(f"Not enough samples for UMAP (n_neighbors={n_neighbors}, n_samples={n_samples})")
                 return self._reduce_dimensions(embeddings, method="pca", n_components=n_components)
             try:
-                self.umap_model = umap.UMAP(n_components=n_components, n_neighbors=n_neighbors, random_state=self.random_state)
+                # Configure UMAP to avoid n_jobs warning with random_state
+                self.umap_model = umap.UMAP(
+                    n_components=n_components, 
+                    n_neighbors=n_neighbors, 
+                    random_state=self.random_state,
+                    n_jobs=1  # Explicitly set n_jobs to avoid random_state override warning
+                )
                 reduced = self.umap_model.fit_transform(embeddings)
             except Exception as e:
                 logger.warning(f"UMAP failed with error: {e}. Falling back to PCA.")

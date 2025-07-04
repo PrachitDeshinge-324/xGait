@@ -117,6 +117,7 @@ class VideoConfig:
     output_path: Optional[str] = None
     output_video_path: Optional[str] = None  # Path for saving annotated video
     display_window: bool = True
+    show_progress_bar: bool = True  # Show progress bar in terminal
     save_output: bool = False
     save_annotated_video: bool = False  # Enable saving annotated video
     max_frames: Optional[int] = None  # Maximum number of frames to process (for testing)
@@ -140,12 +141,48 @@ class xgaitConfig:
     device: str = get_xgait_device()  # Use global XGait device logic
 
 @dataclass
+class IdentityConfig:
+    """Identity system configuration settings"""
+    # Gallery management
+    gallery_path: str = "visualization_analysis/simple_gallery.json"
+    backup_gallery_on_save: bool = True
+    max_persons_in_gallery: int = 100
+    
+    # Embedding quality and similarity thresholds
+    min_quality_threshold: float = 0.3
+    similarity_threshold: float = 0.7
+    high_confidence_threshold: float = 0.85
+    
+    # Embedding buffer management
+    max_embeddings_per_person: int = 20
+    min_embeddings_for_stable_prototype: int = 3
+    
+    # Prototype update strategies
+    prototype_update_strategy: str = "weighted_average"  # "best_quality", "recent_average", "weighted_average"
+    
+    # Interactive naming settings
+    auto_naming_enabled: bool = False  # Never auto-name, always prompt user
+    skip_poor_quality_tracks: bool = True
+    min_track_length_for_naming: int = 10
+    
+    # Visualization settings
+    show_confidence_in_overlay: bool = True
+    show_track_id_in_overlay: bool = True
+    use_colored_boxes_for_known_persons: bool = True
+    
+    # Performance settings
+    consolidation_interval: int = 500  # frames
+    enable_periodic_cleanup: bool = True
+    max_track_history_length: int = 1000
+
+@dataclass
 class SystemConfig:
     """Main system configuration"""
     model: ModelConfig = field(default_factory=ModelConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     video: VideoConfig = field(default_factory=VideoConfig)
     xgait: xgaitConfig = field(default_factory=xgaitConfig)  # Ensure xgaitConfig is included here
+    identity: IdentityConfig = field(default_factory=IdentityConfig)  # Include IdentityConfig
 
     # System settings
     verbose: bool = True
