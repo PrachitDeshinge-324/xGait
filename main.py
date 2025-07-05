@@ -5,13 +5,13 @@ A comprehensive person tracking system with GaitParsing capabilities
 
 Features:
 - Real-time person detection and tracking using YOLO
-- GaitParsing pipeline (silhouette extraction, human parsing, XGait features)
+- GaitParsing pipeline (silhouette extraction, human parsing, XGait features) - Always enabled
 - Parallel processing for optimal performance
 - Debug visualization and analysis tools
 
 Usage:
-    python main.py --input video.mp4                    # Basic tracking
-    python main.py --input video.mp4 --enable-gait      # With GaitParsing
+    python main.py --input video.mp4                    # Process with GaitParsing
+    python main.py --input video.mp4 --no-display      # Headless mode
 """
 
 import argparse
@@ -23,7 +23,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from src.config import SystemConfig
-from track_persons import PersonTrackingApp
+from src.app.main_app import PersonTrackingApp
 
 
 def parse_arguments():
@@ -33,9 +33,9 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --input video.mp4                           # Basic tracking only
-  %(prog)s --input video.mp4 --enable-gait            # With GaitParsing
+  %(prog)s --input video.mp4                           # Process with GaitParsing
   %(prog)s --input video.mp4 --no-display             # Headless mode
+  %(prog)s --input video.mp4 --save-video             # Save annotated video
         """
     )
     
@@ -46,12 +46,12 @@ Examples:
                       help='Output directory for results (optional)')
     parser.add_argument('--output-video', 
                       help='Output path for annotated video (e.g., output.mp4)')
-    parser.add_argument('--save-video', action='store_true',
+    parser.add_argument('--save-video', action='store_true', default=True,
                       help='Save annotated video output')
     
-    # Features
-    parser.add_argument('--enable-gait', action='store_true',
-                      help='Enable GaitParsing pipeline (silhouette, parsing, XGait)')
+    # Features - GaitParsing is always enabled
+    # parser.add_argument('--enable-gait', action='store_true', default=True,
+    #                   help='Enable GaitParsing pipeline (silhouette, parsing, XGait)')
     
     # Display and Debug
     parser.add_argument('--no-display', action='store_true',
@@ -99,8 +99,8 @@ def configure_system(args):
         else:
             config.video.output_video_path = str(input_path.parent / output_name)
     
-    # Feature flags
-    enable_gait = args.enable_gait
+    # Feature flags - GaitParsing is always enabled
+    enable_gait = True
     
     # Debug configuration
     config.verbose = args.debug
@@ -118,7 +118,7 @@ def configure_system(args):
     if args.gait_model:
         config.model.xgait_model_path = args.gait_model
         
-    return config, enable_gait
+    return config
 
 
 def main():
@@ -126,7 +126,7 @@ def main():
     try:
         # Parse arguments and configure system
         args = parse_arguments()
-        config, enable_gait = configure_system(args)
+        config = configure_system(args)
         
         # Validate input file
         input_path = Path(args.input)
@@ -140,17 +140,17 @@ def main():
         print(f"📹 Input: {input_path}")
         print(f"🔧 Device: {config.model.device}")
         print(f"👁️  Display: {'Enabled' if config.video.display_window else 'Disabled (headless)'}")
-        print(f"🚶 GaitParsing: {'Enabled' if enable_gait else 'Disabled'}")
+        print(f"🚶 GaitParsing: Enabled (always)")
         print(f"🐛 Debug mode: {'Enabled' if config.debug_mode else 'Disabled'}")
         if config.video.max_frames:
             print(f"🎬 Max frames: {config.video.max_frames} (testing mode)")
         print("=" * 60)
         
-        # Initialize and run application
+        # Initialize and run application - GaitParsing is always enabled
         app = PersonTrackingApp(
             config=config,
             enable_identification=False,
-            enable_gait_parsing=enable_gait
+            enable_gait_parsing=True  # Always enable gait parsing
         )
         
         # Process video
@@ -161,15 +161,15 @@ def main():
         print("📊 FINAL RESULTS")
         print("=" * 60)
         
-        if enable_gait:
-            gait_stats = app.get_gait_parsing_stats()
-            if gait_stats:
-                print(f"🎯 GaitParsing Results:")
-                print(f"   • Tracks processed: {gait_stats['tracks_processed']}")
-                print(f"   • Total parsing results: {gait_stats['total_parsing_results']}")
-                print(f"   • Average processing time: {gait_stats['avg_processing_time']:.3f}s")
-                if config.debug_mode:
-                    print(f"   • Debug images saved: {gait_stats['debug_images_saved']}")
+        # GaitParsing is always enabled, so always show stats
+        gait_stats = app.get_gait_parsing_stats()
+        if gait_stats:
+            print(f"🎯 GaitParsing Results:")
+            print(f"   • Tracks processed: {gait_stats['tracks_processed']}")
+            print(f"   • Total parsing results: {gait_stats['total_parsing_results']}")
+            print(f"   • Average processing time: {gait_stats['avg_processing_time']:.3f}s")
+            if config.debug_mode:
+                print(f"   • Debug images saved: {gait_stats['debug_images_saved']}")
         
         print("\n✅ Application completed successfully!")
         return 0

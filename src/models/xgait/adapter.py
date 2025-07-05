@@ -16,8 +16,8 @@ src_dir = current_dir.parent
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
-from .official_xgait_model import create_official_xgait_inference, OfficialXGaitInference
-from utils.device_utils import get_xgait_device
+from . import create_official_xgait_inference, OfficialXGaitInference
+from ...utils.device_utils import get_xgait_device
 
 logger = logging.getLogger(__name__)
 

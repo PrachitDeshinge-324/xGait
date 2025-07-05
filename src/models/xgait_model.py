@@ -1,6 +1,9 @@
 """
-Official XGait Model Entry Point
+XGait Model Entry Point
 Uses the official Gait3D-Benchmark implementation for maximum performance
+
+This is the main entry point for XGait functionality in the codebase.
+All XGait-related components are organized in the xgait/ folder.
 """
 from pathlib import Path
 from typing import Optional
@@ -10,9 +13,9 @@ import sys
 # Add parent directory for imports when running directly
 if __name__ == "__main__":
     sys.path.append(str(Path(__file__).parent.parent.parent))
-    from src.models.xgait_adapter import XGaitAdapter
+    from src.models.xgait.adapter import XGaitAdapter
 else:
-    from .xgait_adapter import XGaitAdapter
+    from .xgait.adapter import XGaitAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +23,8 @@ logger = logging.getLogger(__name__)
 def create_xgait_inference(model_path: Optional[str] = None, device: str = None, num_classes: int = 3000):
     """
     Create and return an XGait inference engine using the official implementation
+    
+    This is the main entry point used by the main application and other parts of the codebase.
     
     Args:
         model_path: Path to XGait model weights (Gait3D-XGait-120000.pt recommended)
@@ -30,7 +35,7 @@ def create_xgait_inference(model_path: Optional[str] = None, device: str = None,
         XGaitAdapter instance (using official XGait implementation)
     """
     if device is None:
-        from config import get_xgait_device
+        from ..config import get_xgait_device
         device = get_xgait_device()
     
     # Look for default model path in weights directory

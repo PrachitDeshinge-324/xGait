@@ -69,10 +69,17 @@ Thumbs.db
 *.bak
 *.old
 
+# Project-specific temporary files
 gallery_data/*
 gallery_analysis/*
 clustering_analysis/*
-visualization*/
+debug_gait_parsing/
 track_naming_results/
 track_samples/
 *.json
+
+# Shell scripts (often contain development-specific paths)
+*.sh
+
+# Keep visualization_analysis folders but ignore their contents
+visualization_analysis*/
