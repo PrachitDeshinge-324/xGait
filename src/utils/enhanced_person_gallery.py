@@ -23,7 +23,6 @@ class MovementType(Enum):
     BACKWARD = "backward"
     LEFT = "left"
     RIGHT = "right"
-    DIAGONAL = "diagonal"
 
 class OrientationType(Enum):
     FRONT = "front"
@@ -278,7 +277,11 @@ class MovementOrientationAnalyzer:
                 else:
                     return MovementType.BACKWARD, avg_speed, direction_angle  # Upward is backward (fallback)
             else:
-                return MovementType.DIAGONAL, avg_speed, direction_angle
+                # Default to the strongest direction when movement is mixed
+                if abs_vx > abs_vy:
+                    return MovementType.RIGHT if avg_vx > 0 else MovementType.LEFT, avg_speed, direction_angle
+                else:
+                    return MovementType.FORWARD if avg_vy > 0 else MovementType.BACKWARD, avg_speed, direction_angle
         elif avg_speed > walking_threshold:  # Standard velocity-based detection as backup
             # Determine primary movement direction
             abs_vx = abs(avg_vx)
@@ -309,7 +312,11 @@ class MovementOrientationAnalyzer:
                 else:
                     return MovementType.BACKWARD, avg_speed, direction_angle  # Upward is backward (fallback)
             else:
-                return MovementType.DIAGONAL, avg_speed, direction_angle
+                # Default to the strongest direction when movement is mixed
+                if abs_vx > abs_vy:
+                    return MovementType.RIGHT if avg_vx > 0 else MovementType.LEFT, avg_speed, direction_angle
+                else:
+                    return MovementType.FORWARD if avg_vy > 0 else MovementType.BACKWARD, avg_speed, direction_angle
         else:
             return MovementType.STEADY, avg_speed, direction_angle
     
@@ -818,8 +825,15 @@ class EnhancedPersonGallery:
             logger.error(f"❌ Error saving enhanced gallery: {e}")
             return False
     
-    def load_gallery(self, filepath: str) -> bool:
-        """Load gallery from JSON file"""
+    def load_gallery(self, filepath: str, clear_track_associations: bool = True) -> bool:
+        """
+        Load gallery from JSON file
+        
+        Args:
+            filepath: Path to the gallery JSON file
+            clear_track_associations: If True, clears track associations to ensure 
+                                    track independence between videos
+        """
         try:
             with open(filepath, 'r') as f:
                 data = json.load(f)
@@ -836,15 +850,21 @@ class EnhancedPersonGallery:
                 self.gallery[person_name] = EnhancedPersonData(
                     person_name=person_dict['person_name'],
                     embeddings_by_context=embeddings_by_context,
-                    track_associations=person_dict['track_associations'],
+                    track_associations=[] if clear_track_associations else person_dict['track_associations'],
                     creation_time=datetime.fromisoformat(person_dict['creation_time']),
                     last_update=datetime.fromisoformat(person_dict['last_update']),
                     total_embeddings=person_dict['total_embeddings']
                 )
             
             # Load mappings and metadata
-            # Convert track_to_person keys from string (JSON) back to int
-            self.track_to_person = {int(k): v for k, v in data['track_to_person'].items()}
+            if clear_track_associations:
+                # Clear track associations to ensure track independence between videos
+                self.track_to_person = {}
+                logger.info(f"🔄 Cleared track associations for enhanced gallery (track independence)")
+            else:
+                # Convert track_to_person keys from string (JSON) back to int
+                self.track_to_person = {int(k): v for k, v in data['track_to_person'].items()}
+            
             self.person_counter = data['person_counter']
             
             if 'statistics' in data:

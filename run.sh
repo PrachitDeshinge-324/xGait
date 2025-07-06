@@ -9,4 +9,4 @@ export OMP_MAX_ACTIVE_LEVELS=1
 export PYTHONUNBUFFERED=1
 
 # Run the application with real-time output (no grep buffering)
-python main.py --input input/3c1.mp4 --max-frames 200 --interactive
+python main.py --input input/3ffc.mp4 --max-frames 300 --interactive --save-video

@@ -438,12 +438,12 @@ class PersonTrackingApp:
                         embeddings = self.identity_manager.track_embedding_buffer[track_id]
                         qualities = self.identity_manager.track_quality_buffer.get(track_id, [0.5] * len(embeddings))
                         
-                        # First create person in simple gallery (for compatibility)
+                        # Create person in simple gallery first (for basic identification)
                         simple_success = self.identity_manager.simple_gallery.create_person_from_track(
                             person_name, track_id, embeddings, qualities
                         )
                         
-                        # Now focus on Enhanced Gallery with context-aware storage
+                        # Then add to Enhanced Gallery for context-aware storage
                         enhanced_success = False
                         if hasattr(self.identity_manager, 'enhanced_gallery') and self.identity_manager.enhanced_gallery and hasattr(self.identity_manager, 'track_crop_buffer') and self.identity_manager.track_crop_buffer:
                             if track_id in self.identity_manager.track_crop_buffer and track_id in self.identity_manager.track_bbox_buffer:
@@ -473,14 +473,24 @@ class PersonTrackingApp:
                                     print(f"✅ Enhanced Gallery: Created person '{person_name}' from track {track_id}")
                                     print(f"   📊 Added {embeddings_added}/{len(embeddings)} embeddings with movement context")
                                     created_persons.append(person_name)
-                                else:
-                                    print(f"⚠️  Enhanced Gallery: No embeddings added for '{person_name}' (low confidence)")
                         
-                        if simple_success and not enhanced_success:
-                            print(f"✅ Simple Gallery: Created person '{person_name}' from track {track_id}")
-                            print(f"   ⚠️  Enhanced Gallery: Could not add context-aware embeddings")
-                        elif not simple_success and not enhanced_success:
+                        if simple_success and enhanced_success:
+                            print(f"✅ Person '{person_name}' created successfully in both galleries")
+                        elif simple_success:
+                            print(f"✅ Person '{person_name}' created in simple gallery only")
+                        elif enhanced_success:
+                            print(f"✅ Person '{person_name}' created in enhanced gallery only")
+                        else:
                             print(f"❌ Failed to create person '{person_name}' from track {track_id}")
+                        
+                        # IMPORTANT: Update track_to_person mapping to mark this track as assigned
+                        if simple_success or enhanced_success:
+                            self.identity_manager.track_to_person[track_id] = person_name
+                            print(f"   📝 Updated track-to-person mapping: Track {track_id} -> {person_name}")
+                
+                # Update the reviewer's track_to_person mapping as well for consistency
+                for track_id, person_name in assignments.items():
+                    reviewer.track_to_person[track_id] = person_name
                 
                 # No need to save gallery here, it will be saved after this method returns
                 
@@ -509,19 +519,18 @@ class PersonTrackingApp:
                 
                 # Print final comprehensive report
                 print("\n" + "=" * 60)
-                print("📊 COMPREHENSIVE GALLERY REPORT")
+                print("📊 FINAL IDENTIFICATION SUMMARY")
                 print("=" * 60)
                 
-                # Simple gallery summary
-                print("📋 Simple Gallery Summary:")
+                # Show both galleries but emphasize the enhanced one
                 self.identity_manager.simple_gallery.print_comprehensive_report()
                 
-                # Enhanced gallery summary
-                print("\n🎯 Enhanced Gallery Summary:")
+                print("\n" + "=" * 60)
                 if hasattr(self.identity_manager, 'enhanced_gallery') and self.identity_manager.enhanced_gallery:
                     self.identity_manager.enhanced_gallery.print_gallery_report()
                 else:
                     print("   Enhanced gallery not available")
+                print("=" * 60)
             else:
                 print("ℹ️  No person assignments made")
         else:

@@ -57,7 +57,7 @@ class ManualTrackMerger:
             True if data loaded successfully
         """
         # Try to load from saved track data first
-        if self.identity_manager.load_track_data():
+        if self.identity_manager.load_track_data(load_track_assignments=True):
             # Use loaded data from identity manager
             self.track_embedding_buffer = dict(self.identity_manager.track_embedding_buffer)
             self.track_quality_buffer = dict(self.identity_manager.track_quality_buffer)

@@ -1,6 +1,8 @@
 - [x] interactive above the embedding visualisation
 - [x] parsing based orientation
-- [ ] Replace the silhoute quality with the parsing quality 
+- [x] Replace the silhoute quality with the parsing quality 
+- [x] Remove diagonal movement direction from movement analysis
+- [x] Ensure interactive review only appears for new/unassigned tracks
 - [ ] Implement enhanced gallery view with infinite scrolling.
 - [ ] Optimize image loading for faster gallery display.
 - [ ] Add search functionality to the gallery.

@@ -86,9 +86,17 @@ class EnhancedIdentityManager:
             enhanced_gallery_path = self.visualization_output_dir / "enhanced_gallery.json"
             if enhanced_gallery_path.exists():
                 print(f"[EnhancedGallery] Loading gallery from {enhanced_gallery_path}")
-                self.enhanced_gallery.load_gallery(enhanced_gallery_path)
+                self.enhanced_gallery.load_gallery(enhanced_gallery_path, clear_track_associations=True)
                 print(f"[EnhancedGallery] Loaded {len(self.enhanced_gallery.gallery)} known persons")
                 success = True
+        
+        # Load track data (embeddings/crops) but NOT track assignments to ensure track independence
+        # track_data_loaded = self.load_track_data(load_track_assignments=False)
+        # if track_data_loaded:
+        #     success = True
+        #     print(f"[TrackData] Loaded track embeddings and crops (track assignments cleared for independence)")
+        # else:
+        #     print(f"[TrackData] No previous track data found")
         
         self.gallery_loaded = success
         return success
@@ -161,7 +169,7 @@ class EnhancedIdentityManager:
                             if new_person:
                                 frame_assignments[track_id] = new_person
         
-        # Store for visualization
+        # Store for visualization and track assignment tracking
         self.track_identities = {}
         for track_id, person_name in frame_assignments.items():
             self.track_identities[track_id] = {
@@ -170,6 +178,8 @@ class EnhancedIdentityManager:
                 'is_new': person_name not in self.simple_gallery.person_to_track.values(),
                 'frame_assigned': frame_count
             }
+            # IMPORTANT: Also store in track_to_person for interactive mode
+            self.track_to_person[track_id] = person_name
         
         # Periodic monitoring
         if frame_count % 500 == 0 and frame_count > 0:
@@ -363,8 +373,14 @@ class EnhancedIdentityManager:
         except Exception as e:
             logger.error(f"Failed to save track data: {e}")
     
-    def load_track_data(self) -> bool:
-        """Load track data from files"""
+    def load_track_data(self, load_track_assignments: bool = False) -> bool:
+        """
+        Load track data from files
+        
+        Args:
+            load_track_assignments: If True, loads track-to-person assignments from previous videos.
+                                  If False, only loads track embeddings/crops for analysis.
+        """
         track_data_path = self.visualization_output_dir / "track_data.json"
         crops_path = self.visualization_output_dir / "track_crops.pkl"
         
@@ -386,8 +402,16 @@ class EnhancedIdentityManager:
             for track_id, qualities in track_data['track_qualities'].items():
                 self.track_quality_buffer[int(track_id)] = qualities
             
-            self.track_to_person = {int(k): v for k, v in track_data['track_to_person'].items()}
-            self.track_identities = {int(k): v for k, v in track_data['track_identities'].items()}
+            # Only load track assignments if requested (to prevent carry-over between videos)
+            if load_track_assignments:
+                self.track_to_person = {int(k): v for k, v in track_data['track_to_person'].items()}
+                self.track_identities = {int(k): v for k, v in track_data['track_identities'].items()}
+                logger.info(f"🔄 Loaded track assignments from previous session")
+            else:
+                # Clear track assignments to ensure track independence between videos
+                self.track_to_person = {}
+                self.track_identities = {}
+                logger.info(f"🔄 Cleared track assignments for track independence between videos")
             
             # Load context data if available
             if crops_path.exists():

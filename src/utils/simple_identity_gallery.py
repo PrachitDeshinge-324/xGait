@@ -790,7 +790,7 @@ class SimpleIdentityGallery:
         return True
     
     def create_person_from_track(self, person_name: str, track_id: int, 
-                                embeddings: List[np.ndarray], qualities: List[float]) -> None:
+                                embeddings: List[np.ndarray], qualities: List[float]) -> bool:
         """
         Create a new person with user-provided name from track data
         
@@ -799,10 +799,13 @@ class SimpleIdentityGallery:
             track_id: Track ID to associate with this person
             embeddings: List of embeddings for this track
             qualities: List of quality scores for the embeddings
+            
+        Returns:
+            bool: True if person was created successfully, False otherwise
         """
         if not embeddings:
             logger.warning(f"Cannot create person {person_name} - no embeddings provided")
-            return
+            return False
         
         # Create prototype from all embeddings
         prototype = self._compute_prototype(embeddings, qualities)
@@ -826,6 +829,7 @@ class SimpleIdentityGallery:
         self.new_person_creations += 1
         
         logger.info(f"🆕 Created person '{person_name}' from track {track_id} with {len(embeddings)} embeddings")
+        return True
     
     def get_comprehensive_stats(self) -> Dict[str, Any]:
         """

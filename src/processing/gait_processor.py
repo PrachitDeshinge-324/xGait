@@ -60,6 +60,7 @@ class GaitProcessor:
         self.track_parsing_results = defaultdict(list)
         self.track_silhouettes = defaultdict(list)
         self.track_parsing_masks = defaultdict(list)
+        self.track_crops = defaultdict(list)  # Store crop sequences for quality calculation
         self.track_gait_features = defaultdict(list)
         self.track_last_xgait_extraction = defaultdict(int)
         
@@ -75,6 +76,7 @@ class GaitProcessor:
         self.track_gait_features.clear()
         self.track_silhouettes.clear()
         self.track_parsing_masks.clear()
+        self.track_crops.clear()
         self.track_parsing_results.clear()
         self.track_last_xgait_extraction.clear()
     
@@ -155,11 +157,13 @@ class GaitProcessor:
             # Step 3: Store in sequence buffers
             self.track_silhouettes[track_id].append(silhouette)
             self.track_parsing_masks[track_id].append(parsing_mask)
+            self.track_crops[track_id].append(crop_resized)  # Store the crop for quality calculation
             
             # Keep only recent frames
             if len(self.track_silhouettes[track_id]) > self.sequence_buffer_size:
                 self.track_silhouettes[track_id].pop(0)
                 self.track_parsing_masks[track_id].pop(0)
+                self.track_crops[track_id].pop(0)
             
             # Step 4: Extract XGait features if conditions are met
             feature_vector = np.zeros(256)
@@ -168,15 +172,19 @@ class GaitProcessor:
             if (len(self.track_silhouettes[track_id]) >= self.min_sequence_length and 
                 frame_count - self.track_last_xgait_extraction[track_id] >= self.xgait_extraction_interval):
                 try:
-                    silhouette_sequence = self.track_silhouettes[track_id].copy()
+                    crop_sequence = self.track_crops[track_id].copy()
                     parsing_sequence = self.track_parsing_masks[track_id].copy()
+                    
+                    # Extract features using silhouettes for XGait (still needed for feature extraction)
+                    silhouette_sequence = self.track_silhouettes[track_id].copy()
                     
                     feature_vector = self.xgait_model.extract_features_from_sequence(
                         silhouettes=silhouette_sequence,
                         parsing_masks=parsing_sequence
                     )
                     
-                    sequence_quality = self._compute_sequence_quality(silhouette_sequence)
+                    # Use parsing-based quality calculation
+                    sequence_quality = self._compute_sequence_quality(crop_sequence, parsing_sequence)
                     
                     # Update identity manager with embeddings
                     self.identity_manager.update_track_embeddings(track_id, feature_vector, sequence_quality)
@@ -220,58 +228,311 @@ class GaitProcessor:
                 'error': str(e)
             }
     
-    def _compute_sequence_quality(self, silhouette_sequence: List[np.ndarray]) -> float:
+    def _compute_sequence_quality(self, crop_sequence: List[np.ndarray], parsing_sequence: List[np.ndarray]) -> float:
         """
-        Compute quality score for a silhouette sequence.
+        Compute quality score for a sequence using both crop and parsing information.
         
         Args:
-            silhouette_sequence: List of silhouette masks
+            crop_sequence: List of crop images
+            parsing_sequence: List of human parsing masks
             
         Returns:
             Quality score between 0 and 1
         """
-        if not silhouette_sequence or len(silhouette_sequence) < 2:
+        if not crop_sequence or not parsing_sequence or len(crop_sequence) != len(parsing_sequence):
+            return 0.0
+            
+        if len(crop_sequence) < 2:
             return 0.0
         
         qualities = []
         
-        # 1. Silhouette completeness
-        completeness_scores = []
-        for sil in silhouette_sequence:
-            if sil.size > 0:
-                non_zero_ratio = np.sum(sil > 0) / sil.size
-                completeness_scores.append(non_zero_ratio)
+        # 1. Parsing completeness quality
+        parsing_completeness = self._compute_parsing_completeness_quality(parsing_sequence)
+        qualities.append(parsing_completeness)
         
-        if completeness_scores:
-            avg_completeness = np.mean(completeness_scores)
-            qualities.append(min(avg_completeness * 2, 1.0))
+        # 2. Crop image quality
+        crop_quality = self._compute_crop_quality(crop_sequence)
+        qualities.append(crop_quality)
         
-        # 2. Temporal consistency
-        if len(silhouette_sequence) >= 2:
-            consistency_scores = []
-            for i in range(len(silhouette_sequence) - 1):
-                sil1, sil2 = silhouette_sequence[i], silhouette_sequence[i + 1]
-                if sil1.shape == sil2.shape and sil1.size > 0:
-                    intersection = np.sum((sil1 > 0) & (sil2 > 0))
-                    union = np.sum((sil1 > 0) | (sil2 > 0))
-                    if union > 0:
-                        consistency_scores.append(intersection / union)
-            
-            if consistency_scores:
-                avg_consistency = np.mean(consistency_scores)
-                qualities.append(avg_consistency)
+        # 3. Parsing temporal consistency
+        parsing_consistency = self._compute_parsing_consistency_quality(parsing_sequence)
+        qualities.append(parsing_consistency)
         
-        # 3. Sequence length bonus
-        length_bonus = min(len(silhouette_sequence) / 30.0, 1.0)
+        # 4. Parsing confidence quality (model certainty)
+        parsing_confidence = self._compute_parsing_confidence_quality(parsing_sequence)
+        qualities.append(parsing_confidence)
+        
+        # 5. Sequence length bonus
+        length_bonus = min(len(crop_sequence) / 30.0, 1.0)
         qualities.append(length_bonus)
         
-        # Combine qualities
+        # Combine qualities with weights focused on crop and parsing quality
         if qualities:
-            weights = [0.4, 0.4, 0.2][:len(qualities)]
+            # Parsing completeness (35%), Crop quality (35%), Parsing consistency (15%), 
+            # Parsing confidence (10%), Length bonus (5%)
+            weights = [0.35, 0.35, 0.15, 0.10, 0.05][:len(qualities)]
             final_quality = sum(q * w for q, w in zip(qualities, weights)) / sum(weights)
             return min(max(final_quality, 0.0), 1.0)
         
         return 0.0
+    
+    def _compute_parsing_completeness_quality(self, parsing_sequence: List[np.ndarray]) -> float:
+        """
+        Compute quality based on how complete the human parsing is.
+        
+        Args:
+            parsing_sequence: List of parsing masks
+            
+        Returns:
+            Completeness quality score between 0 and 1
+        """
+        if not parsing_sequence:
+            return 0.0
+            
+        completeness_scores = []
+        
+        # Expected body parts: head(1), body(2), r_arm(3), l_arm(4), r_leg(5), l_leg(6)
+        expected_parts = [1, 2, 3, 4, 5, 6]
+        essential_parts = [1, 2]  # head, body are most important
+        limb_parts = [3, 4, 5, 6]  # arms and legs
+        
+        for parsing_mask in parsing_sequence:
+            if parsing_mask.size == 0:
+                completeness_scores.append(0.0)
+                continue
+                
+            # Count detected body parts with area thresholds
+            detected_parts = []
+            part_areas = {}
+            total_person_area = np.sum(parsing_mask > 0)
+            
+            for part_id in expected_parts:
+                if part_id in np.unique(parsing_mask):
+                    part_mask = (parsing_mask == part_id)
+                    part_area = np.sum(part_mask)
+                    relative_area = part_area / max(total_person_area, 1)
+                    
+                    # Different thresholds for different parts
+                    if part_id in essential_parts:
+                        min_area_threshold = 0.02  # 2% for head/body
+                    else:
+                        min_area_threshold = 0.01  # 1% for limbs
+                    
+                    if relative_area > min_area_threshold:
+                        detected_parts.append(part_id)
+                        part_areas[part_id] = relative_area
+            
+            # Calculate completeness with weighted scoring
+            essential_score = 0.0
+            limb_score = 0.0
+            
+            # Essential parts scoring (60% weight)
+            detected_essential = [p for p in detected_parts if p in essential_parts]
+            essential_score = len(detected_essential) / len(essential_parts)
+            
+            # Limb parts scoring (40% weight)
+            detected_limbs = [p for p in detected_parts if p in limb_parts]
+            limb_score = len(detected_limbs) / len(limb_parts)
+            
+            # Combined score with bonus for symmetry
+            basic_score = 0.6 * essential_score + 0.4 * limb_score
+            
+            # Symmetry bonus (arms and legs should be balanced)
+            symmetry_bonus = 0.0
+            if 3 in detected_parts and 4 in detected_parts:  # both arms
+                symmetry_bonus += 0.05
+            if 5 in detected_parts and 6 in detected_parts:  # both legs
+                symmetry_bonus += 0.05
+            
+            # Area distribution bonus (parts should have reasonable relative sizes)
+            area_bonus = 0.0
+            if 1 in part_areas and 2 in part_areas:  # head and body present
+                head_body_ratio = part_areas[1] / part_areas[2]
+                if 0.1 < head_body_ratio < 0.5:  # reasonable head-to-body ratio
+                    area_bonus += 0.05
+            
+            final_score = min(basic_score + symmetry_bonus + area_bonus, 1.0)
+            completeness_scores.append(final_score)
+        
+        return np.mean(completeness_scores) if completeness_scores else 0.0
+    
+    def _compute_crop_quality(self, crop_sequence: List[np.ndarray]) -> float:
+        """
+        Compute quality based on crop image characteristics.
+        
+        Args:
+            crop_sequence: List of crop images
+            
+        Returns:
+            Crop quality score between 0 and 1
+        """
+        if not crop_sequence:
+            return 0.0
+            
+        quality_scores = []
+        
+        for crop in crop_sequence:
+            if crop.size == 0:
+                quality_scores.append(0.0)
+                continue
+                
+            # Convert to grayscale for analysis
+            if len(crop.shape) == 3:
+                gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = crop
+            
+            # 1. Sharpness (Laplacian variance) - Enhanced
+            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            sharpness_score = min(laplacian_var / 100.0, 1.0)  # Normalize
+            
+            # 2. Contrast (standard deviation of pixel values) - Enhanced
+            contrast_score = min(np.std(gray) / 64.0, 1.0)  # Normalize
+            
+            # 3. Brightness adequacy (not too dark, not too bright)
+            mean_brightness = np.mean(gray)
+            brightness_score = 1.0 - abs(mean_brightness - 128) / 128.0
+            
+            # 4. Size adequacy (prefer reasonable crop sizes)
+            crop_area = crop.shape[0] * crop.shape[1]
+            size_score = 1.0 if crop_area > 32 * 64 else crop_area / (32 * 64)
+            
+            # 5. Edge density (more edges = better defined person)
+            edges = cv2.Canny(gray, 50, 150)
+            edge_density = np.sum(edges > 0) / edges.size
+            edge_score = min(edge_density * 5.0, 1.0)  # Normalize
+            
+            # 6. Histogram distribution (avoid too uniform images)
+            hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+            hist_std = np.std(hist)
+            hist_score = min(hist_std / 1000.0, 1.0)  # Normalize
+            
+            # Combine crop quality metrics with enhanced weights
+            crop_quality = (0.25 * sharpness_score + 0.25 * contrast_score + 
+                          0.15 * brightness_score + 0.15 * size_score + 
+                          0.10 * edge_score + 0.10 * hist_score)
+            quality_scores.append(crop_quality)
+        
+        return np.mean(quality_scores) if quality_scores else 0.0
+    
+    def _compute_parsing_consistency_quality(self, parsing_sequence: List[np.ndarray]) -> float:
+        """
+        Compute quality based on temporal consistency of parsing masks.
+        
+        Args:
+            parsing_sequence: List of parsing masks
+            
+        Returns:
+            Consistency quality score between 0 and 1
+        """
+        if not parsing_sequence or len(parsing_sequence) < 2:
+            return 0.0
+            
+        consistency_scores = []
+        
+        # Compare consecutive parsing masks
+        for i in range(len(parsing_sequence) - 1):
+            mask1 = parsing_sequence[i]
+            mask2 = parsing_sequence[i + 1]
+            
+            if mask1.size == 0 or mask2.size == 0 or mask1.shape != mask2.shape:
+                consistency_scores.append(0.0)
+                continue
+            
+            # Calculate consistency for each body part with weighted importance
+            part_consistencies = []
+            expected_parts = [1, 2, 3, 4, 5, 6]  # head, body, r_arm, l_arm, r_leg, l_leg
+            part_weights = [0.25, 0.35, 0.10, 0.10, 0.10, 0.10]  # head and body are more important
+            
+            weighted_consistency = 0.0
+            total_weight = 0.0
+            
+            for part_id, weight in zip(expected_parts, part_weights):
+                part_mask1 = (mask1 == part_id)
+                part_mask2 = (mask2 == part_id)
+                
+                # Only consider parts that exist in at least one frame
+                if np.any(part_mask1) or np.any(part_mask2):
+                    # Calculate IoU (Intersection over Union) for this part
+                    intersection = np.sum(part_mask1 & part_mask2)
+                    union = np.sum(part_mask1 | part_mask2)
+                    
+                    if union > 0:
+                        iou = intersection / union
+                        weighted_consistency += weight * iou
+                        total_weight += weight
+            
+            # Calculate final consistency score
+            if total_weight > 0:
+                frame_consistency = weighted_consistency / total_weight
+                consistency_scores.append(frame_consistency)
+        
+        if not consistency_scores:
+            return 0.0
+        
+        # Add bonus for stable sequences (low variance in consistency)
+        mean_consistency = np.mean(consistency_scores)
+        consistency_std = np.std(consistency_scores)
+        stability_bonus = max(0.0, 0.1 * (1.0 - consistency_std))
+        
+        final_consistency = min(mean_consistency + stability_bonus, 1.0)
+        return final_consistency
+    
+    def _compute_parsing_confidence_quality(self, parsing_sequence: List[np.ndarray]) -> float:
+        """
+        Compute quality based on parsing model confidence.
+        This is estimated from the clarity and distinctness of parsing boundaries.
+        
+        Args:
+            parsing_sequence: List of parsing masks
+            
+        Returns:
+            Confidence quality score between 0 and 1
+        """
+        if not parsing_sequence:
+            return 0.0
+            
+        confidence_scores = []
+        
+        for parsing_mask in parsing_sequence:
+            if parsing_mask.size == 0:
+                confidence_scores.append(0.0)
+                continue
+            
+            # 1. Boundary clarity (sharp transitions between parts)
+            # Create edge map of parsing boundaries
+            edges = cv2.Canny(parsing_mask.astype(np.uint8), 1, 2)
+            edge_density = np.sum(edges > 0) / edges.size
+            boundary_score = min(edge_density * 20.0, 1.0)  # Normalize
+            
+            # 2. Part separation (distinct regions for different parts)
+            unique_parts = np.unique(parsing_mask)
+            num_parts = len(unique_parts) - 1  # Exclude background (0)
+            separation_score = min(num_parts / 6.0, 1.0)  # 6 is max expected parts
+            
+            # 3. Regional coherence (parts should be connected regions)
+            coherence_scores = []
+            expected_parts = [1, 2, 3, 4, 5, 6]
+            
+            for part_id in expected_parts:
+                if part_id in unique_parts:
+                    part_mask = (parsing_mask == part_id).astype(np.uint8)
+                    # Count connected components
+                    num_labels, _ = cv2.connectedComponents(part_mask)
+                    # Ideally each part should be 1 connected component
+                    coherence = 1.0 / max(num_labels - 1, 1)  # -1 to exclude background
+                    coherence_scores.append(coherence)
+            
+            avg_coherence = np.mean(coherence_scores) if coherence_scores else 0.0
+            
+            # Combine confidence metrics
+            confidence = 0.4 * boundary_score + 0.3 * separation_score + 0.3 * avg_coherence
+            confidence_scores.append(confidence)
+        
+        return np.mean(confidence_scores) if confidence_scores else 0.0
+
+    # ...existing code...
     
     def _collect_parsing_results(self, frame_count: int) -> None:
         """Collect completed parsing results from the queue"""
@@ -358,7 +619,7 @@ class GaitProcessor:
                 pass
     
     def get_statistics(self) -> Dict:
-        """Get gait parsing statistics"""
+        """Get comprehensive gait parsing statistics including quality metrics"""
         total_tracks_processed = len(self.track_parsing_results)
         total_results = sum(len(results) for results in self.track_parsing_results.values())
         
@@ -368,12 +629,29 @@ class GaitProcessor:
             all_times.extend([r.get('processing_time', 0) for r in results])
         avg_processing_time = np.mean(all_times) if all_times else 0
         
-        return {
+        # Get quality statistics
+        quality_stats = self.get_quality_statistics()
+        
+        # Track sequence lengths
+        sequence_lengths = []
+        for track_id in self.track_crops.keys():
+            if self.track_crops[track_id]:
+                sequence_lengths.append(len(self.track_crops[track_id]))
+        
+        base_stats = {
             "tracks_processed": total_tracks_processed,
             "total_parsing_results": total_results,
             "avg_processing_time": avg_processing_time,
-            "debug_images_saved": len(list(self.debug_output_dir.glob("*.png"))) if self.debug_output_dir.exists() else 0
+            "debug_images_saved": len(list(self.debug_output_dir.glob("*.png"))) if self.debug_output_dir.exists() else 0,
+            "avg_sequence_length": np.mean(sequence_lengths) if sequence_lengths else 0,
+            "max_sequence_length": np.max(sequence_lengths) if sequence_lengths else 0,
+            "tracks_with_sequences": len(sequence_lengths)
         }
+        
+        # Merge with quality statistics
+        base_stats.update(quality_stats)
+        
+        return base_stats
     
     def _save_debug_visualization(self, frame: np.ndarray, tracking_results: List[Tuple[int, any, float]], frame_count: int) -> None:
         """Save comprehensive debug visualization"""
@@ -540,3 +818,133 @@ class GaitProcessor:
                 print(f"⚠️  Error saving visualization: {e}")
                 import traceback
                 traceback.print_exc()
+    
+    def _analyze_sequence_quality_breakdown(self, crop_sequence: List[np.ndarray], parsing_sequence: List[np.ndarray]) -> Dict[str, float]:
+        """
+        Analyze and return a detailed breakdown of sequence quality metrics.
+        
+        Args:
+            crop_sequence: List of crop images
+            parsing_sequence: List of human parsing masks
+            
+        Returns:
+            Dictionary with detailed quality breakdown
+        """
+        if not crop_sequence or not parsing_sequence or len(crop_sequence) != len(parsing_sequence):
+            return {
+                'overall_quality': 0.0,
+                'parsing_completeness': 0.0,
+                'crop_quality': 0.0,
+                'parsing_consistency': 0.0,
+                'parsing_confidence': 0.0,
+                'sequence_length_bonus': 0.0,
+                'sequence_length': 0
+            }
+        
+        # Calculate individual quality components
+        parsing_completeness = self._compute_parsing_completeness_quality(parsing_sequence)
+        crop_quality = self._compute_crop_quality(crop_sequence)
+        parsing_consistency = self._compute_parsing_consistency_quality(parsing_sequence)
+        parsing_confidence = self._compute_parsing_confidence_quality(parsing_sequence)
+        length_bonus = min(len(crop_sequence) / 30.0, 1.0)
+        
+        # Calculate overall quality using the same weights as the main method
+        weights = [0.35, 0.35, 0.15, 0.10, 0.05]
+        qualities = [parsing_completeness, crop_quality, parsing_consistency, parsing_confidence, length_bonus]
+        overall_quality = sum(q * w for q, w in zip(qualities, weights)) / sum(weights)
+        
+        return {
+            'overall_quality': overall_quality,
+            'parsing_completeness': parsing_completeness,
+            'crop_quality': crop_quality,
+            'parsing_consistency': parsing_consistency,
+            'parsing_confidence': parsing_confidence,
+            'sequence_length_bonus': length_bonus,
+            'sequence_length': len(crop_sequence)
+        }
+    
+    def get_quality_statistics(self) -> Dict[str, any]:
+        """
+        Get comprehensive quality statistics for all tracks.
+        
+        Returns:
+            Dictionary with quality statistics across all tracks
+        """
+        all_qualities = []
+        quality_components = {
+            'parsing_completeness': [],
+            'crop_quality': [],
+            'parsing_consistency': [],
+            'parsing_confidence': [],
+            'sequence_length_bonus': []
+        }
+        
+        for track_id in self.track_crops.keys():
+            if (track_id in self.track_parsing_masks and 
+                len(self.track_crops[track_id]) > 0 and 
+                len(self.track_parsing_masks[track_id]) > 0):
+                
+                crop_seq = self.track_crops[track_id]
+                parsing_seq = self.track_parsing_masks[track_id]
+                
+                if len(crop_seq) >= 2:  # Minimum sequence for quality calculation
+                    quality_breakdown = self._analyze_sequence_quality_breakdown(crop_seq, parsing_seq)
+                    all_qualities.append(quality_breakdown['overall_quality'])
+                    
+                    for component, value in quality_breakdown.items():
+                        if component in quality_components:
+                            quality_components[component].append(value)
+        
+        # Calculate statistics
+        stats = {
+            'total_tracks_with_quality': len(all_qualities),
+            'mean_overall_quality': np.mean(all_qualities) if all_qualities else 0.0,
+            'std_overall_quality': np.std(all_qualities) if all_qualities else 0.0,
+            'min_overall_quality': np.min(all_qualities) if all_qualities else 0.0,
+            'max_overall_quality': np.max(all_qualities) if all_qualities else 0.0,
+            'component_means': {}
+        }
+        
+        # Add component statistics
+        for component, values in quality_components.items():
+            if values:
+                stats['component_means'][component] = {
+                    'mean': np.mean(values),
+                    'std': np.std(values),
+                    'min': np.min(values),
+                    'max': np.max(values)
+                }
+        
+        return stats
+    
+    def log_quality_information(self, track_id: int, verbose: bool = False) -> None:
+        """
+        Log detailed quality information for a specific track.
+        
+        Args:
+            track_id: Track identifier
+            verbose: Whether to print detailed breakdown
+        """
+        if (track_id not in self.track_crops or 
+            track_id not in self.track_parsing_masks or
+            len(self.track_crops[track_id]) < 2):
+            if verbose:
+                print(f"📊 Track {track_id}: Insufficient data for quality analysis")
+            return
+        
+        crop_seq = self.track_crops[track_id]
+        parsing_seq = self.track_parsing_masks[track_id]
+        
+        quality_breakdown = self._analyze_sequence_quality_breakdown(crop_seq, parsing_seq)
+        
+        if verbose:
+            print(f"📊 Track {track_id} Quality Analysis:")
+            print(f"   Overall Quality: {quality_breakdown['overall_quality']:.3f}")
+            print(f"   └─ Parsing Completeness (35%): {quality_breakdown['parsing_completeness']:.3f}")
+            print(f"   └─ Crop Quality (35%): {quality_breakdown['crop_quality']:.3f}")
+            print(f"   └─ Parsing Consistency (15%): {quality_breakdown['parsing_consistency']:.3f}")
+            print(f"   └─ Parsing Confidence (10%): {quality_breakdown['parsing_confidence']:.3f}")
+            print(f"   └─ Sequence Length Bonus (5%): {quality_breakdown['sequence_length_bonus']:.3f}")
+            print(f"   Sequence Length: {quality_breakdown['sequence_length']} frames")
+        
+        return quality_breakdown
