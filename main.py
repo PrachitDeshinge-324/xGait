@@ -61,6 +61,10 @@ Examples:
     parser.add_argument('--save-debug', action='store_true',
                       help='Save debug visualizations to disk')
     
+    # Interactive Mode
+    parser.add_argument('--interactive', action='store_true',
+                      help='Enable interactive mode for manual person identification')
+    
     # Performance
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda', 'mps'],
                       default='auto', help='Processing device')
@@ -83,6 +87,7 @@ def configure_system(args):
     config.video.input_path = args.input
     config.video.display_window = not args.no_display
     config.video.save_annotated_video = args.save_video or bool(args.output_video)
+    config.video.interactive_mode = args.interactive  # Set interactive mode flag
     
     if args.max_frames is not None:
         config.video.max_frames = args.max_frames
@@ -142,6 +147,7 @@ def main():
         print(f"👁️  Display: {'Enabled' if config.video.display_window else 'Disabled (headless)'}")
         print(f"🚶 GaitParsing: Enabled (always)")
         print(f"🐛 Debug mode: {'Enabled' if config.debug_mode else 'Disabled'}")
+        print(f"🎮 Interactive mode: {'Enabled' if args.interactive else 'Disabled'}")
         if config.video.max_frames:
             print(f"🎬 Max frames: {config.video.max_frames} (testing mode)")
         print("=" * 60)

@@ -121,6 +121,7 @@ class VideoConfig:
     save_output: bool = False
     save_annotated_video: bool = False  # Enable saving annotated video
     max_frames: Optional[int] = None  # Maximum number of frames to process (for testing)
+    interactive_mode: bool = False  # Enable interactive mode for manual person identification
     # Video encoding settings
     output_fps: Optional[float] = None  # Auto-detect from input if None
     output_codec: str = "mp4v"  # Video codec for output
@@ -147,6 +148,13 @@ class IdentityConfig:
     gallery_path: str = "visualization_analysis/simple_gallery.json"
     backup_gallery_on_save: bool = True
     max_persons_in_gallery: int = 100
+    
+    # Enhanced gallery system settings
+    use_enhanced_gallery: bool = True
+    enhanced_gallery_path: str = "visualization_analysis/enhanced_gallery.json"
+    max_embeddings_per_context: int = 5
+    min_movement_confidence: float = 0.6
+    movement_history_length: int = 10
     
     # Embedding quality and similarity thresholds
     min_quality_threshold: float = 0.3

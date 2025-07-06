@@ -45,10 +45,12 @@ from src.models.parsing_model import HumanParsingModel
 from src.models.xgait_model import create_xgait_inference
 from src.utils.simple_identity_gallery import SimpleIdentityGallery
 from src.utils.embedding_visualization import EmbeddingVisualizer
+from src.utils.visual_track_reviewer import VisualTrackReviewer
 from src.processing.video_processor import VideoProcessor
 from src.processing.gait_processor import GaitProcessor
 from src.processing.statistics_manager import StatisticsManager
 from src.processing.identity_manager import IdentityManager
+from src.processing.enhanced_identity_manager import EnhancedIdentityManager
 
 
 class PersonTrackingApp:
@@ -75,7 +77,15 @@ class PersonTrackingApp:
         # Initialize processing components
         self.video_processor = VideoProcessor(config)
         self.statistics_manager = StatisticsManager(config)
-        self.identity_manager = IdentityManager(config)
+        
+        # Use enhanced identity manager with configurable option
+        use_enhanced_gallery = self.config.identity.use_enhanced_gallery
+        if use_enhanced_gallery:
+            self.identity_manager = EnhancedIdentityManager(config, use_enhanced_gallery=True)
+            print("✅ Enhanced Identity Manager initialized")
+        else:
+            self.identity_manager = IdentityManager(config)
+            print("✅ Standard Identity Manager initialized")
         
         # Initialize GaitParsing pipeline
         if self.enable_gait_parsing:
@@ -263,6 +273,10 @@ class PersonTrackingApp:
         if self.gait_processor:
             self.gait_processor.finalize_processing(frame_count)
         
+        # Run interactive track review if enabled
+        if self.config.video.interactive_mode:
+            self.run_interactive_track_review()
+        
         # Save final results
         self.identity_manager.save_gallery()
         self.identity_manager.print_final_summary()
@@ -355,3 +369,160 @@ class PersonTrackingApp:
         if not self.gait_processor:
             return {}
         return self.gait_processor.get_statistics()
+    
+    def run_interactive_track_review(self) -> None:
+        """Run interactive track review for manual person identification"""
+        if not self.config.video.interactive_mode:
+            return
+            
+        print("\n" + "=" * 60)
+        print("🎮 INTERACTIVE PERSON IDENTIFICATION")
+        print("=" * 60)
+        
+        # Use existing in-memory data from identity manager instead of loading from files
+        if not hasattr(self.identity_manager, 'track_embedding_buffer') or not self.identity_manager.track_embedding_buffer:
+            print("❌ No track data available in memory. Make sure video processing completed.")
+            return
+        
+        # Initialize reviewer but skip loading track data since we have it in memory
+        reviewer = VisualTrackReviewer()
+        
+        # Set the track data directly from the identity manager
+        reviewer.track_embedding_buffer = dict(self.identity_manager.track_embedding_buffer)
+        reviewer.track_quality_buffer = dict(self.identity_manager.track_quality_buffer)
+        reviewer.track_to_person = dict(getattr(self.identity_manager, 'track_to_person', {}))
+        
+        # Set crop and bbox data if available (for enhanced gallery)
+        if hasattr(self.identity_manager, 'track_crop_buffer'):
+            reviewer.track_crop_buffer = dict(self.identity_manager.track_crop_buffer)
+        if hasattr(self.identity_manager, 'track_bbox_buffer'):
+            reviewer.track_bbox_buffer = dict(self.identity_manager.track_bbox_buffer)
+        if hasattr(self.identity_manager, 'track_parsing_buffer'):
+            reviewer.track_parsing_buffer = dict(self.identity_manager.track_parsing_buffer)
+        
+        # Identify unassigned tracks
+        reviewer.unassigned_tracks = set()
+        for track_id in reviewer.track_embedding_buffer.keys():
+            if track_id not in reviewer.track_to_person:
+                reviewer.unassigned_tracks.add(track_id)
+        
+        print(f"📊 Using in-memory track data:")
+        print(f"   Total tracks: {len(reviewer.track_embedding_buffer)}")
+        print(f"   Assigned tracks: {len(reviewer.track_to_person)}")
+        print(f"   Unassigned tracks: {len(reviewer.unassigned_tracks)}")
+        
+        if not reviewer.track_embedding_buffer:
+            print("❌ No track embeddings available for review.")
+            return
+        
+        # Show overview
+        reviewer.show_all_tracks_overview()
+        
+        # Ask if user wants to proceed
+        proceed = input("\n🚀 Start interactive person identification? (y/n, default=y): ").strip().lower()
+        if proceed != 'n':
+            # Review unassigned tracks
+            assignments = reviewer.review_all_unassigned_tracks()
+            
+            if assignments:
+                print(f"\n💾 Applying {len(assignments)} person assignments to ENHANCED GALLERY...")
+                
+                # We can use the existing identity manager instead of creating a new one
+                # since we're already in the app context
+                
+                # Create persons from assignments - Focus on Enhanced Gallery
+                created_persons = []
+                for track_id, person_name in assignments.items():
+                    # Get track data directly from identity manager
+                    if track_id in self.identity_manager.track_embedding_buffer:
+                        embeddings = self.identity_manager.track_embedding_buffer[track_id]
+                        qualities = self.identity_manager.track_quality_buffer.get(track_id, [0.5] * len(embeddings))
+                        
+                        # First create person in simple gallery (for compatibility)
+                        simple_success = self.identity_manager.simple_gallery.create_person_from_track(
+                            person_name, track_id, embeddings, qualities
+                        )
+                        
+                        # Now focus on Enhanced Gallery with context-aware storage
+                        enhanced_success = False
+                        if hasattr(self.identity_manager, 'enhanced_gallery') and self.identity_manager.enhanced_gallery and hasattr(self.identity_manager, 'track_crop_buffer') and self.identity_manager.track_crop_buffer:
+                            if track_id in self.identity_manager.track_crop_buffer and track_id in self.identity_manager.track_bbox_buffer:
+                                crops = self.identity_manager.track_crop_buffer[track_id]
+                                bboxes = self.identity_manager.track_bbox_buffer[track_id]
+                                parsing_masks = self.identity_manager.track_parsing_buffer.get(track_id, [])
+                                
+                                # Add embeddings to enhanced gallery with movement analysis
+                                embeddings_added = 0
+                                for i, (embedding, quality) in enumerate(zip(embeddings, qualities)):
+                                    if i < len(crops) and i < len(bboxes):
+                                        crop = crops[i]
+                                        bbox = bboxes[i]
+                                        frame_number = i  # Use index as frame number
+                                        parsing_mask = parsing_masks[i] if i < len(parsing_masks) else None
+                                        
+                                        success = self.identity_manager.enhanced_gallery.add_person_embedding(
+                                            person_name, track_id, embedding, bbox, 
+                                            crop, frame_number, quality, parsing_mask
+                                        )
+                                        
+                                        if success:
+                                            embeddings_added += 1
+                                
+                                if embeddings_added > 0:
+                                    enhanced_success = True
+                                    print(f"✅ Enhanced Gallery: Created person '{person_name}' from track {track_id}")
+                                    print(f"   📊 Added {embeddings_added}/{len(embeddings)} embeddings with movement context")
+                                    created_persons.append(person_name)
+                                else:
+                                    print(f"⚠️  Enhanced Gallery: No embeddings added for '{person_name}' (low confidence)")
+                        
+                        if simple_success and not enhanced_success:
+                            print(f"✅ Simple Gallery: Created person '{person_name}' from track {track_id}")
+                            print(f"   ⚠️  Enhanced Gallery: Could not add context-aware embeddings")
+                        elif not simple_success and not enhanced_success:
+                            print(f"❌ Failed to create person '{person_name}' from track {track_id}")
+                
+                # No need to save gallery here, it will be saved after this method returns
+                
+                # Show Enhanced Gallery visualization if persons were created
+                if created_persons and hasattr(self.identity_manager, 'enhanced_gallery') and self.identity_manager.enhanced_gallery:
+                    print("\n" + "=" * 60)
+                    print("🎨 ENHANCED GALLERY VISUALIZATION")
+                    print("=" * 60)
+                    
+                    # Show detailed enhanced gallery report
+                    self.identity_manager.enhanced_gallery.print_gallery_report()
+                    
+                    # Ask if user wants to see individual person details
+                    show_details = input(f"\n📋 Show detailed person analysis? (y/n, default=y): ").strip().lower()
+                    if show_details != 'n':
+                        for person_name in created_persons:
+                            if person_name in self.identity_manager.enhanced_gallery.gallery:
+                                person_data = self.identity_manager.enhanced_gallery.gallery[person_name]
+                                print(f"\n👤 {person_name} - Context Analysis:")
+                                print(f"   📊 Total embeddings: {person_data.total_embeddings}")
+                                print(f"   🎯 Contexts captured: {len(person_data.embeddings_by_context)}")
+                                
+                                for context_key, context_embeddings in person_data.embeddings_by_context.items():
+                                    movement_type, orientation_type = context_key.split('_', 1)
+                                    print(f"   • {movement_type.title()} + {orientation_type.replace('_', ' ').title()}: {len(context_embeddings)} embeddings")
+                
+                # Print final comprehensive report
+                print("\n" + "=" * 60)
+                print("📊 COMPREHENSIVE GALLERY REPORT")
+                print("=" * 60)
+                
+                # Simple gallery summary
+                print("📋 Simple Gallery Summary:")
+                self.identity_manager.simple_gallery.print_comprehensive_report()
+                
+                # Enhanced gallery summary
+                print("\n🎯 Enhanced Gallery Summary:")
+                if hasattr(self.identity_manager, 'enhanced_gallery') and self.identity_manager.enhanced_gallery:
+                    self.identity_manager.enhanced_gallery.print_gallery_report()
+                else:
+                    print("   Enhanced gallery not available")
+            else:
+                print("ℹ️  No person assignments made")
+        else:
+            print("❌ Interactive review skipped by user.")

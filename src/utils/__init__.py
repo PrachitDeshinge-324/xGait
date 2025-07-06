@@ -10,6 +10,8 @@ from .device_utils import (
     get_global_device,
     get_xgait_device
 )
+from .enhanced_person_gallery import EnhancedPersonGallery
+from .simple_identity_gallery import SimpleIdentityGallery
 
 __all__ = [
     "TrackingVisualizer", 
@@ -18,5 +20,7 @@ __all__ = [
     "tensor_to_numpy", 
     "ensure_tensor_device",
     "get_global_device",
-    "get_xgait_device"
+    "get_xgait_device",
+    "EnhancedPersonGallery",
+    "SimpleIdentityGallery"
 ]

@@ -6,10 +6,12 @@ from .video_processor import VideoProcessor
 from .gait_processor import GaitProcessor
 from .statistics_manager import StatisticsManager
 from .identity_manager import IdentityManager
+from .enhanced_identity_manager import EnhancedIdentityManager
 
 __all__ = [
     'VideoProcessor',
     'GaitProcessor', 
     'StatisticsManager',
-    'IdentityManager'
+    'IdentityManager',
+    'EnhancedIdentityManager'
 ]

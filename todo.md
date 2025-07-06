@@ -1,0 +1,12 @@
+- [x] interactive above the embedding visualisation
+- [x] parsing based orientation
+- [ ] Replace the silhoute quality with the parsing quality 
+- [ ] Implement enhanced gallery view with infinite scrolling.
+- [ ] Optimize image loading for faster gallery display.
+- [ ] Add search functionality to the gallery.
+- [ ] Fix collision detection bug in person identification.
+- [ ] Improve accuracy of person re-identification in crowded scenes.
+- [ ] Develop a user interface for model training and evaluation.
+- [ ] Write comprehensive documentation for the project.
+- [ ] Conduct thorough testing of all new features.
+- [ ] Prepare a presentation on project progress and future plans.

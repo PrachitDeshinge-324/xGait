@@ -102,6 +102,10 @@ class GaitProcessor:
             # Extract crop
             crop = frame[y1:y2, x1:x2]
             
+            # Update identity manager with context data for enhanced gallery
+            if hasattr(self.identity_manager, 'update_track_context'):
+                self.identity_manager.update_track_context(track_id, crop, (x1, y1, x2, y2))
+            
             # Process crops that have minimum size
             if crop.shape[0] > 40 and crop.shape[1] > 20:
                 # Submit to thread pool (non-blocking)

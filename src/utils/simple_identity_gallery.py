@@ -849,7 +849,7 @@ class SimpleIdentityGallery:
                 'low_quality': 0,  # < 0.5
             },
             'embedding_statistics': {
-                'min_embeddings': float('inf'),
+                'min_embeddings': 0,  # Changed from float('inf') to 0
                 'max_embeddings': 0,
                 'total_embeddings_added': self.total_embeddings_added,
                 'new_person_creations': self.new_person_creations,
@@ -868,6 +868,9 @@ class SimpleIdentityGallery:
         total_embeddings = 0
         total_quality = 0
         quality_counts = {'high': 0, 'medium': 0, 'low': 0}
+        
+        # Initialize min_embeddings properly for comparison
+        min_embeddings = float('inf')
         
         for person_name, person_data in self.gallery.items():
             num_embeddings = len(person_data.embeddings)
@@ -897,12 +900,13 @@ class SimpleIdentityGallery:
                     quality_counts['low'] += 1
             
             # Update embedding statistics
-            stats['embedding_statistics']['min_embeddings'] = min(
-                stats['embedding_statistics']['min_embeddings'], num_embeddings
-            )
+            min_embeddings = min(min_embeddings, num_embeddings)
             stats['embedding_statistics']['max_embeddings'] = max(
                 stats['embedding_statistics']['max_embeddings'], num_embeddings
             )
+        
+        # Set final min_embeddings
+        stats['embedding_statistics']['min_embeddings'] = min_embeddings if min_embeddings != float('inf') else 0
         
         # Calculate averages
         stats['gallery_overview']['avg_embeddings_per_person'] = total_embeddings / len(self.gallery)
@@ -912,10 +916,6 @@ class SimpleIdentityGallery:
         stats['quality_distribution']['high_quality'] = quality_counts['high']
         stats['quality_distribution']['medium_quality'] = quality_counts['medium']
         stats['quality_distribution']['low_quality'] = quality_counts['low']
-        
-        # Fix min_embeddings if no persons
-        if stats['embedding_statistics']['min_embeddings'] == float('inf'):
-            stats['embedding_statistics']['min_embeddings'] = 0
         
         return stats
     
