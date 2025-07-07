@@ -421,8 +421,8 @@ class PersonTrackingApp:
         # Ask if user wants to proceed
         proceed = input("\n🚀 Start interactive person identification? (y/n, default=y): ").strip().lower()
         if proceed != 'n':
-            # Review unassigned tracks
-            assignments = reviewer.review_all_unassigned_tracks()
+            # Review all tracks (both assigned and unassigned)
+            assignments = reviewer.review_all_tracks()
             
             if assignments:
                 print(f"\n💾 Applying {len(assignments)} person assignments to ENHANCED GALLERY...")
@@ -430,20 +430,42 @@ class PersonTrackingApp:
                 # We can use the existing identity manager instead of creating a new one
                 # since we're already in the app context
                 
-                # Create persons from assignments - Focus on Enhanced Gallery
+                # Create or update persons from assignments - Focus on Enhanced Gallery
                 created_persons = []
+                updated_persons = []
                 for track_id, person_name in assignments.items():
                     # Get track data directly from identity manager
                     if track_id in self.identity_manager.track_embedding_buffer:
                         embeddings = self.identity_manager.track_embedding_buffer[track_id]
                         qualities = self.identity_manager.track_quality_buffer.get(track_id, [0.5] * len(embeddings))
                         
-                        # Create person in simple gallery first (for basic identification)
-                        simple_success = self.identity_manager.simple_gallery.create_person_from_track(
-                            person_name, track_id, embeddings, qualities
-                        )
+                        # Check if this is a reassignment of an existing track
+                        previous_person = self.identity_manager.simple_gallery.track_to_person.get(track_id)
+                        if previous_person and previous_person != person_name:
+                            print(f"🔄 Reassigning track {track_id} from '{previous_person}' to '{person_name}'")
                         
-                        # Then add to Enhanced Gallery for context-aware storage
+                        # Check if person already exists in gallery
+                        person_exists = (person_name in self.identity_manager.simple_gallery.gallery)
+                        
+                        # Create or update person in simple gallery
+                        if person_exists:
+                            # Update existing person with new embeddings
+                            simple_success = self.identity_manager.simple_gallery._add_embeddings_to_person(
+                                person_name, embeddings, qualities, track_id
+                            )
+                            if simple_success:
+                                updated_persons.append(person_name)
+                                print(f"✅ Updated person '{person_name}' in simple gallery with track {track_id}")
+                        else:
+                            # Create new person
+                            simple_success = self.identity_manager.simple_gallery.create_person_from_track(
+                                person_name, track_id, embeddings, qualities
+                            )
+                            if simple_success:
+                                created_persons.append(person_name)
+                                print(f"✅ Created new person '{person_name}' in simple gallery from track {track_id}")
+                        
+                        # Then handle Enhanced Gallery processing similarly
                         enhanced_success = False
                         if hasattr(self.identity_manager, 'enhanced_gallery') and self.identity_manager.enhanced_gallery and hasattr(self.identity_manager, 'track_crop_buffer') and self.identity_manager.track_crop_buffer:
                             if track_id in self.identity_manager.track_crop_buffer and track_id in self.identity_manager.track_bbox_buffer:

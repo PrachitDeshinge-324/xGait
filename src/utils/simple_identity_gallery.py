@@ -1044,3 +1044,30 @@ class SimpleIdentityGallery:
                     logger.error(f"Failed to delete backup {file_path}: {e}")
         
         return deleted_files
+    
+    def _add_embeddings_to_person(self, person_name: str, embeddings: List[np.ndarray], 
+                                 qualities: List[float], track_id: int) -> bool:
+        """
+        Add multiple embeddings to an existing person
+        
+        Args:
+            person_name: Name of the person to update
+            embeddings: List of embeddings to add
+            qualities: List of quality scores for the embeddings
+            track_id: Track ID associated with these embeddings
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if person_name not in self.gallery:
+            logger.warning(f"❌ Cannot add embeddings - person '{person_name}' not found in gallery")
+            return False
+            
+        person_data = self.gallery[person_name]
+        
+        # Add each embedding with its quality
+        for embedding, quality in zip(embeddings, qualities):
+            self._add_embedding_to_person(person_name, embedding, quality, track_id)
+            
+        logger.info(f"✅ Added {len(embeddings)} embeddings to person '{person_name}' from track {track_id}")
+        return True

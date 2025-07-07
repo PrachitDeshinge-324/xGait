@@ -287,3 +287,92 @@ class VisualTrackReviewer:
         qualities = track_qualities.get(track_id, [0.5] * len(embeddings))
         
         return embeddings, qualities
+    
+    def review_all_tracks(self) -> Dict[int, str]:
+        """Review all tracks interactively, including assigned ones for confirmation"""
+        summary = self.get_track_summary()
+        
+        if not summary:
+            print("❌ No tracks found")
+            return {}
+        
+        print(f"\n🚀 Starting interactive review of all {len(summary)} tracks")
+        
+        assignments = {}
+        
+        # Sort tracks by assigned status (assigned first) then by track_id
+        all_tracks = sorted(summary.keys(), key=lambda tid: (not summary[tid]['is_assigned'], tid))
+        
+        for i, track_id in enumerate(all_tracks):
+            is_assigned = summary[track_id]['is_assigned']
+            current_person = summary[track_id]['assigned_person']
+            
+            print(f"\n📋 Progress: {i+1}/{len(all_tracks)}")
+            
+            # For assigned tracks, ask for confirmation
+            if is_assigned and current_person:
+                person_name = self.review_assigned_track_interactive(track_id, current_person)
+            else:
+                person_name = self.review_track_interactive(track_id)
+            
+            if person_name:
+                assignments[track_id] = person_name
+                print(f"✅ Track {track_id} assigned to '{person_name}'")
+            
+            # Ask if user wants to continue
+            if i < len(all_tracks) - 1:
+                continue_review = input(f"\nContinue reviewing? (y/n, default=y): ").strip().lower()
+                if continue_review == 'n':
+                    print("🛑 Review session ended by user")
+                    break
+        
+        return assignments
+        
+    def review_assigned_track_interactive(self, track_id: int, current_person: str) -> Optional[str]:
+        """Review a track that already has an assigned identity"""
+        # Use buffer attributes if available, otherwise use loaded attributes
+        track_embeddings = getattr(self, 'track_embedding_buffer', None) or getattr(self, 'track_embeddings', {})
+        
+        if track_id not in track_embeddings:
+            print(f"❌ Track {track_id} not found")
+            return None
+        
+        # Show track info
+        summary = self.get_track_summary()
+        info = summary[track_id]
+        
+        print(f"\n🔍 Reviewing Track {track_id} - Currently Identified as '{current_person}'")
+        print(f"   • Embeddings: {info['num_embeddings']}")
+        print(f"   • Average Quality: {info['avg_quality']:.3f}")
+        print(f"   • Crops Available: {info['num_crops']}")
+        
+        # Show crops if available
+        if info['num_crops'] > 0:
+            print(f"📸 Showing crops for Track {track_id}...")
+            self.show_track_crops(track_id)
+        
+        # Ask for confirmation
+        while True:
+            print(f"\n🎯 Track {track_id} - Is '{current_person}' correct?")
+            print("   1. Yes, keep this identification")
+            print("   2. No, enter new identity")
+            print("   3. Show crops again")
+            
+            choice = input("Enter choice (1-3): ").strip()
+            
+            if choice == '1':
+                print(f"✅ Confirmed: Track {track_id} is '{current_person}'")
+                return current_person
+            elif choice == '2':
+                person_name = input("Enter correct person name: ").strip()
+                if person_name:
+                    return person_name
+                else:
+                    print("❌ Empty name not allowed")
+            elif choice == '3':
+                if info['num_crops'] > 0:
+                    self.show_track_crops(track_id)
+                else:
+                    print("❌ No crops available for this track")
+            else:
+                print("❌ Invalid choice. Please enter 1-3")
