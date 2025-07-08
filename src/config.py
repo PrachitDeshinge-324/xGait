@@ -158,7 +158,7 @@ class IdentityConfig:
     
     # Embedding quality and similarity thresholds
     min_quality_threshold: float = 0.3
-    similarity_threshold: float = 0.7
+    similarity_threshold: float = 0.8
     high_confidence_threshold: float = 0.85
     
     # Embedding buffer management

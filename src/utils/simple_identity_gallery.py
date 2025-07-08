@@ -227,7 +227,7 @@ class SimpleIdentityGallery:
         return person_name
     
     def assign_or_update_identities(self, track_embeddings: Dict[int, Tuple[np.ndarray, float]], 
-                                   frame_number: int) -> Dict[int, str]:
+                                   frame_number: int) -> Tuple[Dict[int, str], Dict[int, float]]:
         """
         Unified method to assign or update identities for tracks in a frame
         
@@ -236,9 +236,10 @@ class SimpleIdentityGallery:
             frame_number: Current frame number
             
         Returns:
-            Dict mapping track_id to assigned person_name
+            Tuple of (Dict mapping track_id to assigned person_name, Dict mapping track_id to similarity_score)
         """
         assigned = {}
+        similarity_scores = {}
         used_persons = set()
         
         for track_id, (embedding, quality) in track_embeddings.items():
@@ -250,11 +251,13 @@ class SimpleIdentityGallery:
             # Check if track has a previous assignment that's still available
             prev_person = self.track_to_person.get(track_id)
             if prev_person and prev_person not in used_persons and prev_person in self.gallery:
-                # Update existing person with new embedding
+                # Update existing person with new embedding - calculate similarity for display
+                prev_similarity = self._cosine_similarity(embedding, self.gallery[prev_person].prototype)
                 self._add_embedding_to_person(prev_person, embedding, quality, track_id)
                 assigned[track_id] = prev_person
+                similarity_scores[track_id] = prev_similarity
                 used_persons.add(prev_person)
-                logger.debug(f"Updated existing assignment: track {track_id} -> {prev_person}")
+                logger.debug(f"Updated existing assignment: track {track_id} -> {prev_person} (similarity: {prev_similarity:.3f})")
                 continue
             
             # Find best matching person from gallery (excluding already used ones)
@@ -275,10 +278,13 @@ class SimpleIdentityGallery:
                 # Match to existing person
                 self._add_embedding_to_person(best_person, embedding, quality, track_id)
                 assigned[track_id] = best_person
+                similarity_scores[track_id] = best_similarity
                 used_persons.add(best_person)
                 self.track_to_person[track_id] = best_person
                 logger.debug(f"Matched track {track_id} to existing person {best_person} (similarity: {best_similarity:.3f})")
             else:
+                # Store similarity score even for unmatched tracks for debugging
+                similarity_scores[track_id] = best_similarity if best_person else 0.0
                 # DO NOT create new person automatically - let manual naming handle it
                 # Just skip assignment for now - manual naming will handle new persons
                 logger.debug(f"No match found for track {track_id} (best similarity: {best_similarity:.3f}) - will need manual naming")
@@ -293,7 +299,7 @@ class SimpleIdentityGallery:
                 
                 logger.debug(f"Track {track_id} has no match above threshold {self.similarity_threshold:.3f} (best: {best_similarity:.3f}) - storing for manual naming")
         
-        return assigned
+        return assigned, similarity_scores
 
     
     def add_track_embeddings(self, track_id: int, embeddings: List[np.ndarray], qualities: Optional[List[float]] = None) -> Optional[str]:
@@ -326,7 +332,7 @@ class SimpleIdentityGallery:
             best_quality = np.mean(qualities) if qualities else 0.5
         
         # Use the unified method
-        result = self.assign_or_update_identities({track_id: (best_embedding, best_quality)}, frame_number=0)
+        result, similarity_scores = self.assign_or_update_identities({track_id: (best_embedding, best_quality)}, frame_number=0)
         return result.get(track_id)
 
     def assign_identities_for_frame(self, track_embeddings: Dict[int, np.ndarray], frame_number: int) -> Dict[int, str]:
@@ -346,7 +352,7 @@ class SimpleIdentityGallery:
             quality = 0.5  # Default quality for legacy calls
             track_embeddings_with_quality[track_id] = (embedding, quality)
         
-        return self.assign_or_update_identities(track_embeddings_with_quality, frame_number)
+        return self.assign_or_update_identities(track_embeddings_with_quality, frame_number)[0]
 
     @staticmethod
     def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:

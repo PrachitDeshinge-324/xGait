@@ -99,12 +99,20 @@ class TrackingVisualizer:
                 person_id = identification_results[track_id]
                 id_conf = identification_confidence.get(track_id, 0.0)
                 if person_id != "Unknown":
-                    self._draw_person_label(annotated_frame, person_id, id_conf, (x1, y2), color)
+                    # Color code the label based on similarity score
+                    if id_conf >= 0.8:
+                        label_color = (0, 255, 0)  # Green for high similarity
+                    elif id_conf >= 0.5:
+                        label_color = (0, 255, 255)  # Yellow for medium similarity  
+                    else:
+                        label_color = (0, 165, 255)  # Orange for low similarity
+                    
+                    self._draw_person_label(annotated_frame, person_id, id_conf, (x1, y2), label_color)
                     # Add NEW/GALLERY label
                     label_text = "NEW" if is_new else "GALLERY"
-                    label_color = (0, 255, 0) if is_new else (0, 122, 255)
+                    gallery_color = (0, 255, 0) if is_new else (0, 122, 255)
                     cv2.putText(annotated_frame, label_text, (x1, y2 + 25),
-                                self.font, 0.6, label_color, 2)
+                                self.font, 0.6, gallery_color, 2)
 
         # Modern status overlay - minimal and clean
         self._draw_modern_status(annotated_frame, len(tracking_results), frame_count, w, h,
@@ -170,23 +178,36 @@ class TrackingVisualizer:
     
     def _draw_person_label(self, frame: np.ndarray, person_id: str, confidence: float,
                           position: Tuple[int, int], color: Tuple[int, int, int]):
-        """Draw person identification label"""
+        """Draw person identification label with similarity score"""
         x, y = position
         
-        # Clean label text
-        label_text = f"{person_id}"
+        # Clean label text with similarity score
+        if confidence > 0:
+            label_text = f"{person_id} ({confidence:.2f})"
+        else:
+            label_text = f"{person_id}"
         (text_w, text_h), baseline = cv2.getTextSize(label_text, self.font, self.font_scale, self.font_thickness)
         
-        # Background with rounded corners effect
+        # Background with rounded corners effect - color coded by similarity
         padding = 10
         label_x1 = x - 2
         label_y1 = y + 8
         label_x2 = x + text_w + padding
         label_y2 = y + text_h + padding + 8
         
-        # Semi-transparent dark background
+        # Color background based on confidence level
+        if confidence >= 0.8:
+            bg_color = (0, 40, 0)  # Dark green for high similarity
+        elif confidence >= 0.5:
+            bg_color = (40, 40, 0)  # Dark yellow for medium similarity
+        elif confidence > 0:
+            bg_color = (40, 20, 0)  # Dark orange for low similarity
+        else:
+            bg_color = (40, 40, 40)  # Dark gray for no similarity info
+        
+        # Semi-transparent background
         overlay = frame.copy()
-        cv2.rectangle(overlay, (label_x1, label_y1), (label_x2, label_y2), (40, 40, 40), -1)
+        cv2.rectangle(overlay, (label_x1, label_y1), (label_x2, label_y2), bg_color, -1)
         cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
         
         # Colored accent line
@@ -222,6 +243,9 @@ class TrackingVisualizer:
             gallery_count = identification_stats.get('gallery_persons', 0)
             if total > 0:
                 status_lines.append(f"Gallery: {gallery_count} • ID: {identified}/{total}")
+        
+        # Add similarity legend
+        status_lines.append("Similarity: Green≥0.8 Yellow≥0.5 Orange<0.5")
         
         # Calculate dimensions for all lines
         max_text_w = 0

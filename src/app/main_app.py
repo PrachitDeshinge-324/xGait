@@ -197,12 +197,16 @@ class PersonTrackingApp:
                         frame_track_embeddings, frame_count
                     )
                     
-                    # Prepare visualization data
+                    # Prepare visualization data with actual similarity scores
                     identification_results = {}
                     identification_confidence = {}
                     for track_id, person_name in frame_assignments.items():
                         identification_results[track_id] = person_name
-                        identification_confidence[track_id] = 1.0
+                        # Get actual similarity score from identity manager
+                        if hasattr(self.identity_manager, 'track_identities') and track_id in self.identity_manager.track_identities:
+                            identification_confidence[track_id] = self.identity_manager.track_identities[track_id].get('confidence', 0.0)
+                        else:
+                            identification_confidence[track_id] = 0.0
                     
                     gallery_stats = self.identity_manager.get_gallery_stats()
                     

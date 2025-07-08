@@ -126,7 +126,7 @@ class EnhancedIdentityManager:
             return {}
         
         # Use simple gallery for primary assignment
-        frame_assignments = self.simple_gallery.assign_or_update_identities(
+        frame_assignments, similarity_scores = self.simple_gallery.assign_or_update_identities(
             frame_track_embeddings, frame_count
         )
         
@@ -172,9 +172,10 @@ class EnhancedIdentityManager:
         # Store for visualization and track assignment tracking
         self.track_identities = {}
         for track_id, person_name in frame_assignments.items():
+            similarity_score = similarity_scores.get(track_id, 0.0)
             self.track_identities[track_id] = {
                 'identity': person_name,
-                'confidence': 1.0,
+                'confidence': similarity_score,  # Use similarity score as confidence
                 'is_new': person_name not in self.simple_gallery.person_to_track.values(),
                 'frame_assigned': frame_count
             }
