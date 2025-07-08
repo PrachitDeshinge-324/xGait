@@ -576,10 +576,12 @@ class EnhancedPersonGallery:
         context_embeddings = person_data.embeddings_by_context[context_key]
         context_embeddings.append(person_embedding)
         
-        # Manage context size
+        # Manage context size - keep best quality embeddings
         if len(context_embeddings) > self.max_embeddings_per_context:
-            # Remove oldest embedding
-            context_embeddings.pop(0)
+            # Sort by quality (descending) and keep only the best ones
+            context_embeddings.sort(key=lambda x: x.quality, reverse=True)
+            # Keep only the top max_embeddings_per_context
+            person_data.embeddings_by_context[context_key] = context_embeddings[:self.max_embeddings_per_context]
         
         # Update person data
         person_data.total_embeddings += 1
@@ -654,10 +656,14 @@ class EnhancedPersonGallery:
     
     def create_new_person(self, track_id: int, embedding: np.ndarray, 
                          bbox: Tuple[int, int, int, int], crop: np.ndarray,
-                         frame_number: int, quality: float, parsing_mask: np.ndarray = None) -> str:
-        """Create a new person with automatic naming"""
-        person_name = f"Person_{self.person_counter:03d}"
-        self.person_counter += 1
+                         frame_number: int, quality: float, parsing_mask: np.ndarray = None, 
+                         custom_name: str = None) -> str:
+        """Create a new person with automatic or custom naming"""
+        if custom_name:
+            person_name = custom_name
+        else:
+            person_name = f"Person_{self.person_counter:03d}"
+            self.person_counter += 1
         
         success = self.add_person_embedding(
             person_name, track_id, embedding, bbox, crop, frame_number, quality, parsing_mask

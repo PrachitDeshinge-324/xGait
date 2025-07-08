@@ -784,22 +784,19 @@ class GaitProcessor:
                     frame_features.append(feats[-1])
                     frame_track_ids.append(t_id)
             
-            gallery_names = list(self.identity_manager.simple_gallery.gallery.keys())
-            gallery_embs = [self.identity_manager.simple_gallery.gallery[name].prototype for name in gallery_names]
+            # Get gallery data from enhanced gallery
+            gallery_stats = self.identity_manager.enhanced_gallery.get_gallery_statistics()
+            gallery_names = list(gallery_stats.get('persons', {}).keys())
+            
+            # For now, we'll skip the similarity visualization since enhanced gallery
+            # doesn't expose individual prototypes in the same way as simple gallery
+            # This would need to be refactored to work with the enhanced gallery structure
             
             sim_ax = axes[4, 0]
-            if frame_features and gallery_embs:
-                sims = cosine_similarity(frame_features, gallery_embs)
-                im = sim_ax.imshow(sims, cmap='coolwarm', vmin=0, vmax=1)
-                sim_ax.set_title('Track vs Gallery Cosine Similarity', fontsize=10)
-                sim_ax.set_xticks(range(len(gallery_names)))
-                sim_ax.set_yticks(range(len(frame_track_ids)))
-                sim_ax.set_xticklabels(gallery_names, fontsize=8, rotation=90)
-                sim_ax.set_yticklabels(frame_track_ids, fontsize=8)
-                fig.colorbar(im, ax=sim_ax, fraction=0.046, pad=0.04)
-            else:
-                sim_ax.text(0.5, 0.5, 'N/A', ha='center', va='center', fontsize=12)
-                sim_ax.set_title('Track vs Gallery Cosine Similarity', fontsize=10)
+            # Skip similarity visualization for now as it needs refactoring for enhanced gallery
+            sim_ax.text(0.5, 0.5, 'Gallery Similarity\n(Enhanced Gallery\nintegration pending)', 
+                       ha='center', va='center', transform=sim_ax.transAxes, fontsize=10)
+            sim_ax.set_title('Track vs Gallery Cosine Similarity', fontsize=10)
             
             # Hide unused similarity plots
             for col_idx in range(1, max_tracks_to_show):

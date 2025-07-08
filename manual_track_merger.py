@@ -18,9 +18,8 @@ from datetime import datetime
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from src.utils.simple_identity_gallery import SimpleIdentityGallery
 from src.utils.enhanced_person_gallery import EnhancedPersonGallery
-from src.processing.enhanced_identity_manager import EnhancedIdentityManager
+from src.processing.enhanced_identity_manager import IdentityManager
 from src.config import SystemConfig
 
 
@@ -32,7 +31,7 @@ class ManualTrackMerger:
         self.config = SystemConfig.load_default() if not config_path else SystemConfig.load_from_file(config_path)
         
         # Initialize identity manager
-        self.identity_manager = EnhancedIdentityManager(self.config, use_enhanced_gallery=True)
+        self.identity_manager = IdentityManager(self.config)
         self.identity_manager.load_gallery()
         
         # Data structures for manual management
@@ -42,9 +41,7 @@ class ManualTrackMerger:
         self.unassigned_tracks = set()
         
         print("🔧 Manual Track Merger initialized")
-        print(f"   Simple gallery: {len(self.identity_manager.simple_gallery.gallery)} persons")
-        if self.identity_manager.enhanced_gallery:
-            print(f"   Enhanced gallery: {len(self.identity_manager.enhanced_gallery.gallery)} persons")
+        print(f"   Enhanced gallery: {len(self.identity_manager.enhanced_gallery.gallery)} persons")
     
     def load_track_data(self, track_data_path: str = None) -> bool:
         """
@@ -107,19 +104,17 @@ class ManualTrackMerger:
         print("👥 PERSON GALLERY")
         print("="*60)
         
-        gallery = self.identity_manager.simple_gallery.gallery
+        gallery = self.identity_manager.enhanced_gallery.gallery
         if not gallery:
             print("📭 Gallery is empty - no persons created yet")
             return
         
-        for person_name, person_data in gallery.items():
-            tracks = person_data.track_associations
-            embeddings = len(person_data.embeddings)
-            avg_quality = np.mean(person_data.qualities) if person_data.qualities else 0.0
-            
-            print(f"{person_name}: {embeddings} embeddings | "
-                  f"Avg Quality: {avg_quality:.3f} | "
-                  f"Tracks: {tracks}")
+        # Get gallery statistics for enhanced gallery
+        stats = self.identity_manager.enhanced_gallery.get_gallery_statistics()
+        for person_name, person_stats in stats.get('persons', {}).items():
+            print(f"{person_name}: {person_stats.get('total_embeddings', 0)} embeddings | "
+                  f"Contexts: {person_stats.get('contexts', 0)} | "
+                  f"Last seen: {person_stats.get('last_seen', 'Unknown')}")
     
     def create_person_from_track(self, track_id: int, person_name: str) -> bool:
         """
@@ -147,9 +142,24 @@ class ManualTrackMerger:
             print(f"❌ Track {track_id} has no embeddings")
             return False
         
-        # Create person in simple gallery
-        success = self.identity_manager.simple_gallery.create_person_from_track(
-            person_name, track_id, embeddings, qualities
+        # Create person in enhanced gallery
+        # Use the best quality embedding
+        if qualities:
+            best_idx = np.argmax(qualities)
+            best_embedding = embeddings[best_idx]
+        else:
+            best_embedding = embeddings[0]
+        
+        # Get context data if available
+        latest_crop = None
+        latest_bbox = None
+        if (track_id in self.identity_manager.track_crop_buffer and 
+            track_id in self.identity_manager.track_bbox_buffer):
+            latest_crop = self.identity_manager.track_crop_buffer[track_id][-1]
+            latest_bbox = self.identity_manager.track_bbox_buffer[track_id][-1]
+        
+        success = self.identity_manager.enhanced_gallery.create_new_person(
+            track_id, best_embedding, latest_bbox, latest_crop, 0, qualities[0] if qualities else 0.5
         )
         
         if success:
@@ -157,17 +167,12 @@ class ManualTrackMerger:
             self.track_to_person[track_id] = person_name
             self.unassigned_tracks.discard(track_id)
             
-            # Create in enhanced gallery if available
-            if self.identity_manager.enhanced_gallery and self.identity_manager.track_crop_buffer:
-                if track_id in self.identity_manager.track_crop_buffer:
-                    latest_crop = self.identity_manager.track_crop_buffer[track_id][-1]
-                    latest_bbox = self.identity_manager.track_bbox_buffer[track_id][-1]
-                    
-                    for i, (embedding, quality) in enumerate(zip(embeddings, qualities)):
-                        self.identity_manager.enhanced_gallery.add_person_embedding(
-                            person_name, track_id, embedding, latest_bbox, 
-                            latest_crop, i, quality
-                        )
+            # Add all embeddings to the enhanced gallery
+            for i, (embedding, quality) in enumerate(zip(embeddings, qualities)):
+                self.identity_manager.enhanced_gallery.add_person_embedding(
+                    person_name, track_id, embedding, latest_bbox, 
+                    latest_crop, i, quality
+                )
             
             print(f"✅ Created person '{person_name}' from track {track_id} with {len(embeddings)} embeddings")
             return True
@@ -210,23 +215,19 @@ class ManualTrackMerger:
             print(f"❌ Secondary track {secondary_track_id} has no embeddings")
             return False
         
-        # Add secondary embeddings to primary person
-        for embedding, quality in zip(secondary_embeddings, secondary_qualities):
-            self.identity_manager.simple_gallery._add_embedding_to_person(
-                primary_person, embedding, quality, secondary_track_id
-            )
-        
-        # Update enhanced gallery if available
-        if (self.identity_manager.enhanced_gallery and 
-            secondary_track_id in self.identity_manager.track_crop_buffer):
+        # Add secondary embeddings to primary person in enhanced gallery
+        if secondary_track_id in self.identity_manager.track_crop_buffer:
             latest_crop = self.identity_manager.track_crop_buffer[secondary_track_id][-1]
             latest_bbox = self.identity_manager.track_bbox_buffer[secondary_track_id][-1]
+        else:
+            latest_crop = None
+            latest_bbox = None
             
-            for i, (embedding, quality) in enumerate(zip(secondary_embeddings, secondary_qualities)):
-                self.identity_manager.enhanced_gallery.add_person_embedding(
-                    primary_person, secondary_track_id, embedding, latest_bbox, 
-                    latest_crop, i, quality
-                )
+        for i, (embedding, quality) in enumerate(zip(secondary_embeddings, secondary_qualities)):
+            self.identity_manager.enhanced_gallery.add_person_embedding(
+                primary_person, secondary_track_id, embedding, latest_bbox, 
+                latest_crop, i, quality
+            )
         
         # Update tracking
         self.track_to_person[secondary_track_id] = primary_person

@@ -1,6 +1,6 @@
 """
 Enhanced Identity Manager with Movement and Orientation Profiling
-Integrates with existing system while providing enhanced functionality
+Uses only the EnhancedPersonGallery system for person identification
 """
 
 import numpy as np
@@ -17,41 +17,28 @@ import pickle
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from src.utils.enhanced_person_gallery import EnhancedPersonGallery, MovementType, OrientationType
-from src.utils.simple_identity_gallery import SimpleIdentityGallery
 
 logger = logging.getLogger(__name__)
 
-class EnhancedIdentityManager:
+class IdentityManager:
     """
-    Enhanced identity manager that combines movement/orientation profiling
-    with existing SimpleIdentityGallery for backward compatibility
+    Identity manager using the EnhancedPersonGallery system
     """
     
-    def __init__(self, config, use_enhanced_gallery: bool = True):
+    def __init__(self, config):
         self.config = config
-        self.use_enhanced_gallery = use_enhanced_gallery
         
-        # Initialize both gallery systems
-        self.simple_gallery = SimpleIdentityGallery(
-            similarity_threshold=0.45,
-            max_embeddings_per_person=12,
-            min_quality_threshold=0.25,
-            prototype_update_strategy="weighted_average"
+        # Initialize enhanced gallery system
+        # Get XGait sequence length from config
+        from src.config import xgaitConfig
+        xgait_sequence_length = xgaitConfig.min_sequence_length
+        
+        self.enhanced_gallery = EnhancedPersonGallery(
+            max_embeddings_per_context=20,
+            similarity_threshold=0.6,
+            min_confidence=0.3,
+            history_length=xgait_sequence_length
         )
-        
-        if use_enhanced_gallery:
-            # Get XGait sequence length from config
-            from src.config import xgaitConfig
-            xgait_sequence_length = xgaitConfig.min_sequence_length
-            
-            self.enhanced_gallery = EnhancedPersonGallery(
-                max_embeddings_per_context=5,
-                similarity_threshold=0.6,
-                min_confidence=0.3,
-                history_length=xgait_sequence_length
-            )
-        else:
-            self.enhanced_gallery = None
         
         # Tracking data
         self.track_embedding_buffer = defaultdict(list)
@@ -67,52 +54,29 @@ class EnhancedIdentityManager:
         self.visualization_output_dir = Path("visualization_analysis")
         self.visualization_output_dir.mkdir(exist_ok=True)
         
-        logger.info(f"✅ Enhanced Identity Manager initialized (Enhanced: {use_enhanced_gallery})")
+        logger.info(f"✅ Enhanced Identity Manager initialized")
     
     def load_gallery(self) -> bool:
         """Load gallery state from files"""
         success = False
         
-        # Load simple gallery
-        simple_gallery_path = self.visualization_output_dir / "simple_gallery.json"
-        if simple_gallery_path.exists():
-            print(f"[SimpleGallery] Loading gallery from {simple_gallery_path}")
-            self.simple_gallery.load_gallery(simple_gallery_path, clear_track_associations=True)
-            print(f"[SimpleGallery] Loaded {len(self.simple_gallery.gallery)} known persons")
+        # Load enhanced gallery
+        enhanced_gallery_path = self.visualization_output_dir / "enhanced_gallery.json"
+        if enhanced_gallery_path.exists():
+            print(f"[EnhancedGallery] Loading gallery from {enhanced_gallery_path}")
+            self.enhanced_gallery.load_gallery(enhanced_gallery_path, clear_track_associations=True)
+            print(f"[EnhancedGallery] Loaded {len(self.enhanced_gallery.gallery)} known persons")
             success = True
-        
-        # Load enhanced gallery if enabled
-        if self.use_enhanced_gallery:
-            enhanced_gallery_path = self.visualization_output_dir / "enhanced_gallery.json"
-            if enhanced_gallery_path.exists():
-                print(f"[EnhancedGallery] Loading gallery from {enhanced_gallery_path}")
-                self.enhanced_gallery.load_gallery(enhanced_gallery_path, clear_track_associations=True)
-                print(f"[EnhancedGallery] Loaded {len(self.enhanced_gallery.gallery)} known persons")
-                success = True
-        
-        # Load track data (embeddings/crops) but NOT track assignments to ensure track independence
-        # track_data_loaded = self.load_track_data(load_track_assignments=False)
-        # if track_data_loaded:
-        #     success = True
-        #     print(f"[TrackData] Loaded track embeddings and crops (track assignments cleared for independence)")
-        # else:
-        #     print(f"[TrackData] No previous track data found")
         
         self.gallery_loaded = success
         return success
     
     def save_gallery(self) -> None:
         """Save gallery state to files"""
-        # Save simple gallery
-        simple_gallery_path = self.visualization_output_dir / "simple_gallery.json"
-        print(f"[SimpleGallery] Saving gallery to {simple_gallery_path}")
-        self.simple_gallery.save_gallery(simple_gallery_path)
-        
-        # Save enhanced gallery if enabled
-        if self.use_enhanced_gallery and self.enhanced_gallery:
-            enhanced_gallery_path = self.visualization_output_dir / "enhanced_gallery.json"
-            print(f"[EnhancedGallery] Saving gallery to {enhanced_gallery_path}")
-            self.enhanced_gallery.save_gallery(enhanced_gallery_path)
+        # Save enhanced gallery
+        enhanced_gallery_path = self.visualization_output_dir / "enhanced_gallery.json"
+        print(f"[EnhancedGallery] Saving gallery to {enhanced_gallery_path}")
+        self.enhanced_gallery.save_gallery(enhanced_gallery_path)
             
         # Save track data for manual merging
         self.save_track_data()
@@ -120,74 +84,75 @@ class EnhancedIdentityManager:
     def assign_or_update_identities(self, frame_track_embeddings: Dict, frame_count: int) -> Dict:
         """
         Assign or update identities for tracks in the current frame
-        Uses both simple and enhanced galleries
+        Uses the enhanced gallery system
         """
         if not frame_track_embeddings:
             return {}
         
-        # Use simple gallery for primary assignment
-        frame_assignments, similarity_scores = self.simple_gallery.assign_or_update_identities(
-            frame_track_embeddings, frame_count
-        )
+        frame_assignments = {}
         
-        # If enhanced gallery is enabled, also process with enhanced system
-        if self.use_enhanced_gallery and self.enhanced_gallery:
-            for track_id, (embedding, quality) in frame_track_embeddings.items():
-                # Get additional context data
-                if (track_id in self.track_crop_buffer and 
-                    track_id in self.track_bbox_buffer and 
-                    self.track_crop_buffer[track_id] and 
-                    self.track_bbox_buffer[track_id]):
-                    
-                    latest_crop = self.track_crop_buffer[track_id][-1]
-                    latest_bbox = self.track_bbox_buffer[track_id][-1]
-                    
-                    # Try to identify with enhanced system
-                    person_name, confidence, movement_profile = self.enhanced_gallery.identify_person(
-                        embedding, track_id, latest_bbox, latest_crop, frame_count
+        # Process with enhanced gallery system
+        assignment_confidences = {}  # Store actual confidences
+        for track_id, (embedding, quality) in frame_track_embeddings.items():
+            # Get additional context data
+            if (track_id in self.track_crop_buffer and 
+                track_id in self.track_bbox_buffer and 
+                self.track_crop_buffer[track_id] and 
+                self.track_bbox_buffer[track_id]):
+                
+                latest_crop = self.track_crop_buffer[track_id][-1]
+                latest_bbox = self.track_bbox_buffer[track_id][-1]
+                
+                # Try to identify with enhanced system
+                person_name, confidence, movement_profile = self.enhanced_gallery.identify_person(
+                    embedding, track_id, latest_bbox, latest_crop, frame_count
+                )
+                
+                if person_name:
+                    # Update enhanced gallery
+                    self.enhanced_gallery.add_person_embedding(
+                        person_name, track_id, embedding, latest_bbox, 
+                        latest_crop, frame_count, quality
                     )
                     
-                    if person_name:
-                        # Update enhanced gallery
-                        self.enhanced_gallery.add_person_embedding(
-                            person_name, track_id, embedding, latest_bbox, 
-                            latest_crop, frame_count, quality
-                        )
-                        
-                        # Use enhanced result if different from simple gallery
-                        if track_id not in frame_assignments or frame_assignments[track_id] != person_name:
-                            logger.info(f"Enhanced gallery override: track {track_id} -> {person_name} "
-                                      f"(movement: {movement_profile.movement_type.value}, "
-                                      f"orientation: {movement_profile.orientation_type.value})")
-                            frame_assignments[track_id] = person_name
-                    else:
-                        # No match in enhanced gallery - could create new person
-                        if track_id not in frame_assignments and confidence > 0.5:
-                            new_person = self.enhanced_gallery.create_new_person(
-                                track_id, embedding, latest_bbox, latest_crop, frame_count, quality
-                            )
-                            if new_person:
-                                frame_assignments[track_id] = new_person
+                    frame_assignments[track_id] = person_name
+                    assignment_confidences[track_id] = confidence  # Store actual confidence
+                    logger.info(f"Enhanced gallery assignment: track {track_id} -> {person_name} "
+                              f"(confidence: {confidence:.3f}, movement: {movement_profile.movement_type.value}, "
+                              f"orientation: {movement_profile.orientation_type.value})")
+                else:
+                    # No match in enhanced gallery - don't create new person automatically
+                    # Let the interactive assignment handle this
+                    if confidence > 0.5:
+                        logger.debug(f"Track {track_id} has no match (confidence: {confidence:.3f}) - will be handled in interactive mode")
+            else:
+                # No context data available - try basic identification
+                person_name, confidence, movement_profile = self.enhanced_gallery.identify_person(
+                    embedding, track_id, None, None, frame_count
+                )
+                
+                if person_name:
+                    frame_assignments[track_id] = person_name
+                    assignment_confidences[track_id] = confidence  # Store actual confidence
+                    logger.info(f"Basic enhanced gallery assignment: track {track_id} -> {person_name} (confidence: {confidence:.3f})")
         
         # Store for visualization and track assignment tracking
         self.track_identities = {}
         for track_id, person_name in frame_assignments.items():
-            similarity_score = similarity_scores.get(track_id, 0.0)
+            actual_confidence = assignment_confidences.get(track_id, 0.8)  # Use actual confidence
             self.track_identities[track_id] = {
                 'identity': person_name,
-                'confidence': similarity_score,  # Use similarity score as confidence
-                'is_new': person_name not in self.simple_gallery.person_to_track.values(),
+                'confidence': actual_confidence,  # Use actual similarity confidence
+                'is_new': False,  # Enhanced gallery handles new person detection internally
                 'frame_assigned': frame_count
             }
-            # IMPORTANT: Also store in track_to_person for interactive mode
+            # Store in track_to_person for interactive mode
             self.track_to_person[track_id] = person_name
         
         # Periodic monitoring
         if frame_count % 500 == 0 and frame_count > 0:
-            print(f"[EnhancedIdentityManager] Track summary at frame {frame_count}")
-            self.simple_gallery.debug_gallery_state("Interim Track Summary")
-            if self.use_enhanced_gallery and self.enhanced_gallery:
-                self.enhanced_gallery.print_gallery_report()
+            print(f"[IdentityManager] Track summary at frame {frame_count}")
+            self.enhanced_gallery.print_gallery_report()
         
         return frame_assignments
     
@@ -224,7 +189,7 @@ class EnhancedIdentityManager:
     
     def merge_persons(self, person1_name: str, person2_name: str) -> bool:
         """
-        Merge two persons in both gallery systems
+        Merge two persons in the enhanced gallery system
         
         Args:
             person1_name: Name of the first person (will be kept)
@@ -233,65 +198,20 @@ class EnhancedIdentityManager:
         Returns:
             True if merge was successful, False otherwise
         """
-        success = True
-        
-        # First check if persons exist in simple gallery
-        if person1_name in self.simple_gallery.gallery and person2_name in self.simple_gallery.gallery:
-            # Get person data
-            person1_data = self.simple_gallery.gallery[person1_name]
-            person2_data = self.simple_gallery.gallery[person2_name]
-            
-            # Merge embeddings and data
-            person1_data.embeddings.extend(person2_data.embeddings)
-            person1_data.qualities.extend(person2_data.qualities)
-            person1_data.track_associations.extend(person2_data.track_associations)
-            person1_data.update_count += person2_data.update_count
-            
-            # Trim to max size if needed
-            if len(person1_data.embeddings) > self.simple_gallery.max_embeddings_per_person:
-                # Keep the best embeddings
-                indices = np.argsort(person1_data.qualities)[::-1][:self.simple_gallery.max_embeddings_per_person]
-                person1_data.embeddings = [person1_data.embeddings[i] for i in indices]
-                person1_data.qualities = [person1_data.qualities[i] for i in indices]
-            
-            # Recompute prototype
-            person1_data.prototype = self.simple_gallery._compute_prototype(
-                person1_data.embeddings, person1_data.qualities
-            )
-            
-            # Update track mappings
-            for track_id in person2_data.track_associations:
-                self.simple_gallery.track_to_person[track_id] = person1_name
-                self.track_to_person[track_id] = person1_name
-            
-            # Remove person2 from simple gallery
-            del self.simple_gallery.gallery[person2_name]
-            
-            logger.info(f"✅ Simple gallery: merged {person2_name} into {person1_name}")
+        # Merge in enhanced gallery
+        enhanced_success = self.enhanced_gallery.merge_persons(person1_name, person2_name)
+        if enhanced_success:
+            logger.info(f"✅ Enhanced gallery: merged {person2_name} into {person1_name}")
         else:
-            logger.warning(f"One or both persons not found in simple gallery: {person1_name}, {person2_name}")
-            success = False
+            logger.warning(f"Enhanced gallery merge failed: {person1_name}, {person2_name}")
         
-        # Merge in enhanced gallery if enabled
-        if self.use_enhanced_gallery and self.enhanced_gallery:
-            enhanced_success = self.enhanced_gallery.merge_persons(person1_name, person2_name)
-            if enhanced_success:
-                logger.info(f"✅ Enhanced gallery: merged {person2_name} into {person1_name}")
-            else:
-                logger.warning(f"Enhanced gallery merge failed: {person1_name}, {person2_name}")
-            success = success and enhanced_success
-        
-        return success
+        return enhanced_success
     
     def get_gallery_stats(self) -> Dict:
         """Get comprehensive gallery statistics"""
         stats = {
-            'simple_gallery': {'num_identities': len(self.simple_gallery.gallery)}
+            'enhanced_gallery': self.enhanced_gallery.get_gallery_statistics()
         }
-        
-        if self.use_enhanced_gallery and self.enhanced_gallery:
-            stats['enhanced_gallery'] = self.enhanced_gallery.get_gallery_statistics()
-        
         return stats
     
     def get_is_new_identity_dict(self) -> Dict:
@@ -303,7 +223,23 @@ class EnhancedIdentityManager:
     
     def get_all_embeddings(self):
         """Get all embeddings for visualization"""
-        return self.simple_gallery.get_all_embeddings()
+        # Convert enhanced gallery embeddings to format expected by visualization
+        embeddings_list = []
+        
+        # Iterate through all persons in the enhanced gallery
+        for person_name, person_data in self.enhanced_gallery.gallery.items():
+            all_person_embeddings = person_data.get_all_embeddings()
+            
+            for person_embedding in all_person_embeddings:
+                # Convert to format: (embedding, identity, track_id, type)
+                embeddings_list.append((
+                    person_embedding.embedding,
+                    person_name,
+                    person_embedding.track_id,
+                    "enhanced_gallery_embedding"
+                ))
+        
+        return embeddings_list
     
     def get_track_embeddings_by_track(self):
         """Get track embeddings organized by track for visualization"""
@@ -323,12 +259,8 @@ class EnhancedIdentityManager:
         print("FINAL IDENTIFICATION SUMMARY")
         print("="*60)
         
-        # Simple gallery summary
-        self.simple_gallery.print_comprehensive_report()
-        
         # Enhanced gallery summary
-        if self.use_enhanced_gallery and self.enhanced_gallery:
-            self.enhanced_gallery.print_gallery_report()
+        self.enhanced_gallery.print_gallery_report()
         
         print("="*60)
     

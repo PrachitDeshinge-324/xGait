@@ -43,14 +43,13 @@ from src.utils.visualization import TrackingVisualizer, VideoWriter
 from src.models.silhouette_model import SilhouetteExtractor
 from src.models.parsing_model import HumanParsingModel
 from src.models.xgait_model import create_xgait_inference
-from src.utils.simple_identity_gallery import SimpleIdentityGallery
+
 from src.utils.embedding_visualization import EmbeddingVisualizer
 from src.utils.visual_track_reviewer import VisualTrackReviewer
 from src.processing.video_processor import VideoProcessor
 from src.processing.gait_processor import GaitProcessor
 from src.processing.statistics_manager import StatisticsManager
-from src.processing.identity_manager import IdentityManager
-from src.processing.enhanced_identity_manager import EnhancedIdentityManager
+from src.processing.enhanced_identity_manager import IdentityManager
 
 
 class PersonTrackingApp:
@@ -78,14 +77,9 @@ class PersonTrackingApp:
         self.video_processor = VideoProcessor(config)
         self.statistics_manager = StatisticsManager(config)
         
-        # Use enhanced identity manager with configurable option
-        use_enhanced_gallery = self.config.identity.use_enhanced_gallery
-        if use_enhanced_gallery:
-            self.identity_manager = EnhancedIdentityManager(config, use_enhanced_gallery=True)
-            print("✅ Enhanced Identity Manager initialized")
-        else:
-            self.identity_manager = IdentityManager(config)
-            print("✅ Standard Identity Manager initialized")
+        # Initialize identity manager
+        self.identity_manager = IdentityManager(config)
+        print("✅ Identity Manager initialized")
         
         # Initialize GaitParsing pipeline
         if self.enable_gait_parsing:
@@ -444,75 +438,72 @@ class PersonTrackingApp:
                         qualities = self.identity_manager.track_quality_buffer.get(track_id, [0.5] * len(embeddings))
                         
                         # Check if this is a reassignment of an existing track
-                        previous_person = self.identity_manager.simple_gallery.track_to_person.get(track_id)
+                        previous_person = self.identity_manager.track_to_person.get(track_id)
                         if previous_person and previous_person != person_name:
                             print(f"🔄 Reassigning track {track_id} from '{previous_person}' to '{person_name}'")
                         
-                        # Check if person already exists in gallery
-                        person_exists = (person_name in self.identity_manager.simple_gallery.gallery)
+                        # Check if person already exists in enhanced gallery
+                        person_exists = (person_name in self.identity_manager.enhanced_gallery.gallery)
                         
-                        # Create or update person in simple gallery
+                        # Create or update person in enhanced gallery
                         if person_exists:
-                            # Update existing person with new embeddings
-                            simple_success = self.identity_manager.simple_gallery._add_embeddings_to_person(
-                                person_name, embeddings, qualities, track_id
-                            )
-                            if simple_success:
-                                updated_persons.append(person_name)
-                                print(f"✅ Updated person '{person_name}' in simple gallery with track {track_id}")
-                        else:
-                            # Create new person
-                            simple_success = self.identity_manager.simple_gallery.create_person_from_track(
-                                person_name, track_id, embeddings, qualities
-                            )
-                            if simple_success:
-                                created_persons.append(person_name)
-                                print(f"✅ Created new person '{person_name}' in simple gallery from track {track_id}")
-                        
-                        # Then handle Enhanced Gallery processing similarly
-                        enhanced_success = False
-                        if hasattr(self.identity_manager, 'enhanced_gallery') and self.identity_manager.enhanced_gallery and hasattr(self.identity_manager, 'track_crop_buffer') and self.identity_manager.track_crop_buffer:
-                            if track_id in self.identity_manager.track_crop_buffer and track_id in self.identity_manager.track_bbox_buffer:
+                            # Update existing person with all embeddings (gallery will handle per-context limits)
+                            if (track_id in self.identity_manager.track_crop_buffer and 
+                                track_id in self.identity_manager.track_bbox_buffer):
                                 crops = self.identity_manager.track_crop_buffer[track_id]
                                 bboxes = self.identity_manager.track_bbox_buffer[track_id]
-                                parsing_masks = self.identity_manager.track_parsing_buffer.get(track_id, [])
                                 
-                                # Add embeddings to enhanced gallery with movement analysis
                                 embeddings_added = 0
+                                # Add all embeddings - let the gallery handle context-based limits
                                 for i, (embedding, quality) in enumerate(zip(embeddings, qualities)):
                                     if i < len(crops) and i < len(bboxes):
-                                        crop = crops[i]
-                                        bbox = bboxes[i]
-                                        frame_number = i  # Use index as frame number
-                                        parsing_mask = parsing_masks[i] if i < len(parsing_masks) else None
-                                        
                                         success = self.identity_manager.enhanced_gallery.add_person_embedding(
-                                            person_name, track_id, embedding, bbox, 
-                                            crop, frame_number, quality, parsing_mask
+                                            person_name, track_id, embedding, bboxes[i], 
+                                            crops[i], i, quality
                                         )
-                                        
                                         if success:
                                             embeddings_added += 1
                                 
                                 if embeddings_added > 0:
-                                    enhanced_success = True
-                                    print(f"✅ Enhanced Gallery: Created person '{person_name}' from track {track_id}")
-                                    print(f"   📊 Added {embeddings_added}/{len(embeddings)} embeddings with movement context")
-                                    created_persons.append(person_name)
-                        
-                        if simple_success and enhanced_success:
-                            print(f"✅ Person '{person_name}' created successfully in both galleries")
-                        elif simple_success:
-                            print(f"✅ Person '{person_name}' created in simple gallery only")
-                        elif enhanced_success:
-                            print(f"✅ Person '{person_name}' created in enhanced gallery only")
+                                    updated_persons.append(person_name)
+                                    print(f"✅ Updated person '{person_name}' in enhanced gallery with track {track_id} ({embeddings_added} embeddings)")
                         else:
-                            print(f"❌ Failed to create person '{person_name}' from track {track_id}")
+                            # Create new person with all embeddings from the track (gallery handles per-context limits)
+                            if embeddings and (track_id in self.identity_manager.track_crop_buffer and 
+                                              track_id in self.identity_manager.track_bbox_buffer):
+                                crops = self.identity_manager.track_crop_buffer[track_id]
+                                bboxes = self.identity_manager.track_bbox_buffer[track_id]
+                                
+                                embeddings_added = 0
+                                # Add all embeddings - the gallery will automatically limit per context (20 per context)
+                                for i, (embedding, quality) in enumerate(zip(embeddings, qualities)):
+                                    if i < len(crops) and i < len(bboxes):
+                                        enhanced_success = self.identity_manager.enhanced_gallery.add_person_embedding(
+                                            person_name, track_id, embedding, bboxes[i], 
+                                            crops[i], i, quality
+                                        )
+                                        if enhanced_success:
+                                            embeddings_added += 1
+                                
+                                if embeddings_added > 0:
+                                    created_persons.append(person_name)
+                                    print(f"✅ Created new person '{person_name}' in enhanced gallery from track {track_id} ({embeddings_added} embeddings)")
+                            elif embeddings:
+                                # Fallback: use all embeddings if crops/bboxes are missing
+                                embeddings_added = 0
+                                for i, (embedding, quality) in enumerate(zip(embeddings, qualities)):
+                                    enhanced_success = self.identity_manager.enhanced_gallery.add_person_embedding(
+                                        person_name, track_id, embedding, (0, 0, 100, 100), None, i, quality
+                                    )
+                                    if enhanced_success:
+                                        embeddings_added += 1
+                                
+                                if embeddings_added > 0:
+                                    created_persons.append(person_name)
+                                    print(f"✅ Created new person '{person_name}' in enhanced gallery from track {track_id} ({embeddings_added} embeddings, fallback mode)")
                         
-                        # IMPORTANT: Update track_to_person mapping to mark this track as assigned
-                        if simple_success or enhanced_success:
-                            self.identity_manager.track_to_person[track_id] = person_name
-                            print(f"   📝 Updated track-to-person mapping: Track {track_id} -> {person_name}")
+                        # Update track mapping
+                        self.identity_manager.track_to_person[track_id] = person_name
                 
                 # Update the reviewer's track_to_person mapping as well for consistency
                 for track_id, person_name in assignments.items():
@@ -548,14 +539,8 @@ class PersonTrackingApp:
                 print("📊 FINAL IDENTIFICATION SUMMARY")
                 print("=" * 60)
                 
-                # Show both galleries but emphasize the enhanced one
-                self.identity_manager.simple_gallery.print_comprehensive_report()
-                
-                print("\n" + "=" * 60)
-                if hasattr(self.identity_manager, 'enhanced_gallery') and self.identity_manager.enhanced_gallery:
-                    self.identity_manager.enhanced_gallery.print_gallery_report()
-                else:
-                    print("   Enhanced gallery not available")
+                # Show enhanced gallery report
+                self.identity_manager.enhanced_gallery.print_gallery_report()
                 print("=" * 60)
             else:
                 print("ℹ️  No person assignments made")

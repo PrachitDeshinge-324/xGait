@@ -145,7 +145,7 @@ class xgaitConfig:
 class IdentityConfig:
     """Identity system configuration settings"""
     # Gallery management
-    gallery_path: str = "visualization_analysis/simple_gallery.json"
+    gallery_path: str = "visualization_analysis/enhanced_gallery.json"
     backup_gallery_on_save: bool = True
     max_persons_in_gallery: int = 100
     

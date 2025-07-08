@@ -1,3 +1,0 @@
-✅ parsing quality 
-✅ parsing based orientation
-✅ interactive above the embedding visualisation
