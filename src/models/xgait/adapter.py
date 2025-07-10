@@ -107,31 +107,6 @@ class XGaitAdapter:
             logger.error(f"Error extracting XGait features: {e}")
             return np.array([])
     
-    def _reduce_part_features(self, features: np.ndarray) -> np.ndarray:
-        """
-        DEPRECATED: Use full features instead of pooled features for better discrimination
-        This method is kept for compatibility but full features are recommended.
-        
-        Args:
-            features: (256, 64) feature tensor where 256 is feature dim, 64 is parts
-            
-        Returns:
-            (256,) reduced feature vector
-        """
-        # Method 1: Global average pooling across parts
-        features_pooled = np.mean(features, axis=1)  # (256,)
-        
-        # Method 2: Weighted pooling (give more weight to middle parts)
-        # parts_weights = np.exp(-0.1 * np.arange(64))  # Exponential decay
-        # parts_weights = parts_weights / np.sum(parts_weights)
-        # features_weighted = np.sum(features * parts_weights[None, :], axis=1)
-        
-        # Method 3: Max pooling across parts (more discriminative)
-        # features_max = np.max(features, axis=1)  # (256,)
-        
-        # For backward compatibility, use global average pooling
-        return features_pooled
-    
     def extract_features(self, silhouette_sequences: List[List[np.ndarray]], 
                         parsing_sequences: List[List[np.ndarray]] = None) -> np.ndarray:
         """

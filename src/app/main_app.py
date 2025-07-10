@@ -10,7 +10,6 @@ import sys
 import cv2
 import numpy as np
 import time
-import queue
 import threading
 import logging
 import matplotlib
@@ -20,7 +19,6 @@ from collections import defaultdict
 from typing import List, Tuple, Dict, Optional
 from pathlib import Path
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
 # Context manager to suppress stdout warnings
@@ -37,14 +35,13 @@ def suppress_stdout():
 # Add parent directory to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from src.config import SystemConfig, xgaitConfig
+from src.config import SystemConfig
 from src.trackers.person_tracker import PersonTracker
 from src.utils.visualization import TrackingVisualizer, VideoWriter
 from src.models.silhouette_model import SilhouetteExtractor
 from src.models.parsing_model import HumanParsingModel
 from src.models.xgait_model import create_xgait_inference
 
-from src.utils.embedding_visualization import EmbeddingVisualizer
 from src.utils.visual_track_reviewer import VisualTrackReviewer
 from src.processing.video_processor import VideoProcessor
 from src.processing.gait_processor import GaitProcessor
@@ -286,37 +283,49 @@ class PersonTrackingApp:
         self._print_final_results(frame_count)
     
     def _generate_final_visualizations(self):
-        """Generate final embedding visualizations"""
-        print("[EmbeddingVisualizer] Visualizing all gallery and track embeddings...")
+        """Generate visualizations only for persons in FAISS gallery"""
+        print("\n" + "="*60)
+        print("� GENERATING FAISS GALLERY PERSON VISUALIZATIONS")
+        print("="*60)
         
+        # Get only FAISS gallery statistics (no track embeddings)
+        gallery_stats = self.identity_manager.faiss_gallery.get_gallery_statistics()
+        print(f"� Gallery persons: {gallery_stats['total_persons']}")
+        print(f"📊 Gallery embeddings: {gallery_stats['total_embeddings']}")
+        
+        if gallery_stats['total_persons'] == 0:
+            print("ℹ️ No persons in FAISS gallery - skipping visualizations")
+            return
+        
+        # Show person details
+        print(f"🏷️ Known persons: {', '.join(gallery_stats['persons'])}")
+        
+        # Generate person gallery visualization only (no track embeddings)
         all_embeddings = self.identity_manager.get_all_embeddings()
-        embeddings_by_track = self.identity_manager.get_track_embeddings_by_track()
         
-        visualizer = EmbeddingVisualizer()
-        
-        # Visualize gallery + track embeddings together
-        for method in ["umap", "pca", "tsne"]:
-            fig = visualizer.visualize_identity_gallery(
-                all_embeddings=all_embeddings,
-                method=method,
-                save_path=f"visualization_analysis/embedding_{method}.png",
-                show_labels=True,
-                plot_type="2d"
-            )
-            if fig is None:
-                print(f"[EmbeddingVisualizer] No gallery embeddings to visualize for {method}.")
-        
-        # Visualize track embeddings only (by track)
-        for method in ["umap", "pca", "tsne"]:
-            fig = visualizer.visualize_track_embeddings(
-                embeddings_by_track=embeddings_by_track,
-                method=method,
-                save_path=f"visualization_analysis/track_embedding_{method}.png",
-                show_labels=True,
-                plot_type="2d"
-            )
-            if fig is None:
-                print(f"[EmbeddingVisualizer] No track embeddings to visualize for {method}.")
+        if len(all_embeddings) > 0:
+            from src.utils.embedding_visualization import EmbeddingVisualizer
+            visualizer = EmbeddingVisualizer()
+            
+            print("\n🎨 Generating person identity visualizations...")
+            for method in ["umap", "pca", "tsne"]:  # Added tsne back
+                print(f"   • {method.upper()} method...", end="")
+                fig = visualizer.visualize_identity_gallery(
+                    all_embeddings=all_embeddings,
+                    method=method,
+                    save_path=f"visualization_analysis/gallery_persons_{method}.png",
+                    show_labels=True,
+                    plot_type="2d"
+                )
+                if fig is None:
+                    print(f" ❌ Failed")
+                else:
+                    print(f" ✅ Saved")
+            
+            print(f"\n📁 Gallery visualizations saved to: visualization_analysis/")
+            print("   • gallery_persons_*.png - Known persons from FAISS gallery (PCA, t-SNE, UMAP)")
+        else:
+            print("⚠️ No embeddings found in FAISS gallery")
     
     def _print_final_results(self, total_frames: int) -> None:
         """Print final tracking results"""
@@ -390,13 +399,9 @@ class PersonTrackingApp:
         reviewer.track_quality_buffer = dict(self.identity_manager.track_quality_buffer)
         reviewer.track_to_person = dict(getattr(self.identity_manager, 'track_to_person', {}))
         
-        # Set crop and bbox data if available (for enhanced gallery)
+        # Set crop data if available (minimal for optimized system)
         if hasattr(self.identity_manager, 'track_crop_buffer'):
             reviewer.track_crop_buffer = dict(self.identity_manager.track_crop_buffer)
-        if hasattr(self.identity_manager, 'track_bbox_buffer'):
-            reviewer.track_bbox_buffer = dict(self.identity_manager.track_bbox_buffer)
-        if hasattr(self.identity_manager, 'track_parsing_buffer'):
-            reviewer.track_parsing_buffer = dict(self.identity_manager.track_parsing_buffer)
         
         # Identify unassigned tracks
         reviewer.unassigned_tracks = set()

@@ -351,7 +351,7 @@ class EmbeddingVisualizer:
                                    alpha=0.6, s=30, label=f'{identity} (track)')
             
             # Plot gallery embeddings on top
-            gallery_mask = np.array(types) == "gallery_embedding"
+            gallery_mask = np.array(types) == "faiss_gallery_embedding"
             if np.any(gallery_mask):
                 gallery_points = reduced_embeddings[gallery_mask]
                 gallery_identities = np.array(identities)[gallery_mask]
@@ -370,31 +370,23 @@ class EmbeddingVisualizer:
         else:
             fig, ax = plt.subplots(figsize=self.figure_size)
             
-            # Plot track embeddings by identity
-            track_mask = np.array(types) == "track_embedding"
-            if np.any(track_mask):
-                track_points = reduced_embeddings[track_mask]
-                track_identities = np.array(identities)[track_mask]
-                for identity in set(track_identities):
-                    identity_mask = track_identities == identity
-                    points = track_points[identity_mask]
-                    if len(points) > 0:
-                        ax.scatter(points[:, 0], points[:, 1],
-                                   c=[self.identity_colors.get(identity, 'gray')],
-                                   alpha=0.6, s=30, label=f'{identity} (track)')
+            # Plot all embeddings grouped by identity (simplified for FAISS-only)
+            unique_identities = list(set(identities))
             
-            # Plot gallery embeddings on top
-            gallery_mask = np.array(types) == "gallery_embedding"
-            if np.any(gallery_mask):
-                gallery_points = reduced_embeddings[gallery_mask]
-                gallery_identities = np.array(identities)[gallery_mask]
-                ax.scatter(gallery_points[:, 0], gallery_points[:, 1],
-                           c='red', s=200, marker='*', alpha=0.9,
-                           edgecolors='black', linewidths=2, label='Gallery embeddings')
-                if show_labels:
-                    for i, identity in enumerate(gallery_identities):
-                        ax.annotate(identity, gallery_points[i], fontsize=8, ha='center',
-                                    bbox=dict(boxstyle="round,pad=0.3", facecolor='yellow', alpha=0.7))
+            for identity in unique_identities:
+                identity_mask = np.array(identities) == identity
+                points = reduced_embeddings[identity_mask]
+                if len(points) > 0:
+                    color = self.identity_colors.get(identity, 'gray')
+                    ax.scatter(points[:, 0], points[:, 1],
+                               c=[color], alpha=0.8, s=100, label=f'{identity}',
+                               edgecolors='black', linewidths=0.5)
+                    
+                    if show_labels and len(points) > 0:
+                        # Add identity label at the center of the cluster
+                        center = np.mean(points, axis=0)
+                        ax.annotate(identity, center, fontsize=10, ha='center', va='center',
+                                    bbox=dict(boxstyle="round,pad=0.3", facecolor=color, alpha=0.3))
             
             ax.set_xlabel(f'{method.upper()} Component 1')
             ax.set_ylabel(f'{method.upper()} Component 2')

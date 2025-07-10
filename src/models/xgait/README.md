@@ -8,7 +8,6 @@ This package contains the complete XGait implementation with modular architectur
 xgait/
 ├── __init__.py           # Package entry point with all exports
 ├── adapter.py            # XGaitAdapter - main interface for the codebase
-├── official.py           # Deprecated official model wrapper
 ├── backbone.py           # ResNet9 backbone implementation
 ├── alignment.py          # Cross-granularity alignment modules
 ├── pooling.py            # Temporal and spatial pooling modules
@@ -55,9 +54,6 @@ inference = create_official_xgait_inference(model_path="weights/Gait3D-XGait-120
 - **HorizontalPoolingPyramid** (`pooling.py`): Spatial pooling for part-based features
 - **SeparateFCs/SeparateBNNecks** (`layers.py`): Part-specific classification layers
 
-### Legacy Components
-- **official.py**: Deprecated wrapper, kept for compatibility
-
 ## Integration Points
 
 The XGait package integrates with:
@@ -72,10 +68,7 @@ The XGait package integrates with:
 If you're updating code that uses old XGait imports:
 
 ```python
-# OLD (deprecated)
-from src.models.official_xgait_model import create_official_xgait_inference
-
-# NEW (recommended)
+# Recommended usage
 from src.models.xgait_model import create_xgait_inference
 
 # OR (direct package usage)

@@ -108,11 +108,11 @@ class TrackingVisualizer:
                         label_color = (0, 165, 255)  # Orange for low similarity (< 0.90)
                     
                     self._draw_person_label(annotated_frame, person_id, id_conf, (x1, y2), label_color)
-                    # Add NEW/GALLERY label
-                    label_text = "NEW" if is_new else "GALLERY"
-                    gallery_color = (0, 255, 0) if is_new else (0, 122, 255)
-                    cv2.putText(annotated_frame, label_text, (x1, y2 + 25),
-                                self.font, 0.6, gallery_color, 2)
+                    # # Add NEW/GALLERY label
+                    # label_text = "NEW" if is_new else "GALLERY"
+                    # gallery_color = (0, 255, 0) if is_new else (0, 122, 255)
+                    # cv2.putText(annotated_frame, label_text, (x1, y2 + 25),
+                    #             self.font, 0.6, gallery_color, 2)
 
         # Modern status overlay - minimal and clean
         self._draw_modern_status(annotated_frame, len(tracking_results), frame_count, w, h,

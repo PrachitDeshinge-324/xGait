@@ -27,26 +27,37 @@ class VisualTrackReviewer:
         self.track_to_person = {}
         
     def load_track_data(self) -> bool:
-        """Load track data from saved files"""
+        """Load track data from saved files - optimized for new storage system"""
         try:
-            # Load track data
+            # Try new metadata format first
+            metadata_path = self.visualization_dir / "track_metadata.json"
+            if metadata_path.exists():
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+                
+                self.track_to_person = {int(k): v for k, v in metadata.get('track_to_person', {}).items()}
+                print(f"✅ Loaded optimized track metadata")
+                return True
+            
+            # Fallback to legacy format
             track_data_path = self.visualization_dir / "track_data.json"
             if not track_data_path.exists():
+                print("ℹ️ No track data found - using in-memory data only")
                 return False
             
             with open(track_data_path, 'r') as f:
                 self.track_data = json.load(f)
             
-            # Load track crops
+            # Only load crops if available (legacy)
             crops_path = self.visualization_dir / "track_crops.pkl"
             if crops_path.exists():
                 with open(crops_path, 'rb') as f:
                     crop_data = pickle.load(f)
                     self.track_crops = crop_data.get('track_crops', {})
             
-            # Process track data
+            # Process legacy track data
             self.track_embeddings = {}
-            for track_id, embeddings in self.track_data['track_embeddings'].items():
+            for track_id, embeddings in self.track_data.get('track_embeddings', {}).items():
                 self.track_embeddings[int(track_id)] = [np.array(emb) for emb in embeddings]
             
             self.track_qualities = {}

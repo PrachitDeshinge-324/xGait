@@ -5,7 +5,6 @@ This package contains the complete XGait implementation with all components:
 - Core model components (backbone, alignment, pooling, layers)
 - Official model implementation 
 - Adapter for backward compatibility
-- Deprecated official model wrapper
 """
 
 from .backbone import ResNet9, BasicBlock, get_backbone
@@ -18,10 +17,6 @@ from .utils import get_valid_args
 
 # Import adapter and legacy components
 from .adapter import XGaitAdapter, create_xgait_adapter, create_xgait_inference as create_xgait_inference_adapter
-from .official import (
-    OfficialXGaitInference as LegacyOfficialXGaitInference,
-    create_official_xgait_inference as create_legacy_xgait_inference
-)
 
 __all__ = [
     # Backbone components
@@ -44,9 +39,6 @@ __all__ = [
     
     # Adapter (recommended interface)
     'XGaitAdapter', 'create_xgait_adapter', 'create_xgait_inference_adapter',
-    
-    # Legacy components
-    'LegacyOfficialXGaitInference', 'create_legacy_xgait_inference',
     
     # Utilities
     'get_valid_args'
