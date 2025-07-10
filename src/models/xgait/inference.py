@@ -99,12 +99,20 @@ class OfficialXGaitInference:
         if len(silhouettes) != len(parsing_masks):
             raise ValueError("Silhouettes and parsing masks must have same length")
         
-        # Ensure minimum sequence length
+        # Ensure minimum sequence length for reliable feature extraction
         if len(silhouettes) < self.min_sequence_length:
-            # Repeat frames to reach minimum length
+            # Repeat frames to reach minimum length with some variation
             repeat_factor = self.min_sequence_length // len(silhouettes) + 1
-            silhouettes = (silhouettes * repeat_factor)[:self.min_sequence_length]
-            parsing_masks = (parsing_masks * repeat_factor)[:self.min_sequence_length]
+            extended_silhouettes = []
+            extended_parsing = []
+            
+            for i in range(self.min_sequence_length):
+                idx = i % len(silhouettes)
+                extended_silhouettes.append(silhouettes[idx])
+                extended_parsing.append(parsing_masks[idx])
+            
+            silhouettes = extended_silhouettes
+            parsing_masks = extended_parsing
         
         # Limit to target sequence length
         if len(silhouettes) > self.target_sequence_length:
@@ -136,11 +144,9 @@ class OfficialXGaitInference:
             else:
                 par_resized = par.copy()
             
-            # Normalize parsing masks
-            if par_resized.max() > 1:
-                par_resized = par_resized.astype(np.float32) / par_resized.max()
-            
-            processed_pars.append(par_resized)
+            # Keep parsing masks as integers (class IDs 0-6)
+            # Do NOT normalize - XGait expects semantic class labels, not normalized values
+            processed_pars.append(par_resized.astype(np.float32))
         
         # Convert to tensors [S, H, W]
         sils_tensor = torch.FloatTensor(np.array(processed_sils)).to(self.device)
@@ -155,7 +161,7 @@ class OfficialXGaitInference:
     def extract_features(self, silhouettes: List[np.ndarray], 
                         parsing_masks: List[np.ndarray]) -> np.ndarray:
         """
-        Extract features using official XGait model
+        Extract features using official XGait model with proper normalization
         """
         try:
             with torch.no_grad():
@@ -177,7 +183,13 @@ class OfficialXGaitInference:
                 # Extract inference features
                 features = output['inference_feat']['embeddings']
                 
-                return features.cpu().numpy()
+                # Features shape: [batch, feature_dim, parts] e.g., [1, 256, 64]
+                # Apply proper normalization for better discrimination
+                # L2 normalization to unit sphere for each part
+                features_normalized = torch.nn.functional.normalize(features, p=2, dim=1)
+                
+                # Return features in original shape for post-processing in adapter
+                return features_normalized.cpu().numpy()  # [batch, feature_dim, parts]
                 
         except Exception as e:
             logger.error(f"Error extracting features: {e}")

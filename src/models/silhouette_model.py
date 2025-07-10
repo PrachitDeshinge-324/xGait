@@ -512,8 +512,8 @@ class SilhouetteExtractor:
                 silhouette = pred.squeeze().cpu().numpy()
                 silhouette = (silhouette * 255).astype(np.uint8)
                 
-                # Resize to standard size
-                silhouette = cv2.resize(silhouette, (64, 128))
+                # Resize to standard size to match parsing masks (128, 256)
+                silhouette = cv2.resize(silhouette, (128, 256))
                 
                 silhouettes.append(silhouette)
         

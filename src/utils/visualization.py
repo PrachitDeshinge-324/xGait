@@ -100,12 +100,12 @@ class TrackingVisualizer:
                 id_conf = identification_confidence.get(track_id, 0.0)
                 if person_id != "Unknown":
                     # Color code the label based on similarity score
-                    if id_conf >= 0.8:
-                        label_color = (0, 255, 0)  # Green for high similarity
-                    elif id_conf >= 0.5:
-                        label_color = (0, 255, 255)  # Yellow for medium similarity  
+                    if id_conf >= 0.92:
+                        label_color = (0, 255, 0)  # Green for high similarity (>= 0.92)
+                    elif id_conf >= 0.90:
+                        label_color = (0, 255, 255)  # Yellow for medium similarity (0.90-0.92)
                     else:
-                        label_color = (0, 165, 255)  # Orange for low similarity
+                        label_color = (0, 165, 255)  # Orange for low similarity (< 0.90)
                     
                     self._draw_person_label(annotated_frame, person_id, id_conf, (x1, y2), label_color)
                     # Add NEW/GALLERY label
@@ -196,14 +196,14 @@ class TrackingVisualizer:
         label_y2 = y + text_h + padding + 8
         
         # Color background based on confidence level
-        if confidence >= 0.8:
-            bg_color = (0, 40, 0)  # Dark green for high similarity
-        elif confidence >= 0.5:
-            bg_color = (40, 40, 0)  # Dark yellow for medium similarity
-        elif confidence > 0:
-            bg_color = (40, 20, 0)  # Dark orange for low similarity
+        if confidence >= 0.92:
+            bg_color = (0, 40, 0)  # Dark green for high similarity (>= 0.92)
+        elif confidence >= 0.90:
+            bg_color = (40, 40, 0)  # Dark yellow for medium similarity (0.90-0.92)
+        elif confidence > 0.85:
+            bg_color = (40, 20, 0)  # Dark orange for low similarity (0.85-0.90)
         else:
-            bg_color = (40, 40, 40)  # Dark gray for no similarity info
+            bg_color = (40, 40, 40)  # Dark gray for very low similarity (< 0.85)
         
         # Semi-transparent background
         overlay = frame.copy()
@@ -245,7 +245,7 @@ class TrackingVisualizer:
                 status_lines.append(f"Gallery: {gallery_count} • ID: {identified}/{total}")
         
         # Add similarity legend
-        status_lines.append("Similarity: Green≥0.8 Yellow≥0.5 Orange<0.5")
+        status_lines.append("Similarity: Green≥0.92 Yellow≥0.90 Orange≥0.85")
         
         # Calculate dimensions for all lines
         max_text_w = 0

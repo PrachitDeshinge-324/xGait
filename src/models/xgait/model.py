@@ -161,11 +161,17 @@ class OfficialXGait(nn.Module):
 def create_official_xgait_model(num_classes=3000):
     """
     Create XGait model with official Gait3D configuration
+    
+    Missing parameters identified and added:
+    1. backbone_cfg: Added 'in_channels' parameter
+    2. Added 'dropout' parameter for regularization
+    3. Fixed parameter compatibility issues
     """
     model_cfg = {
         'backbone_cfg': {
             'type': 'ResNet9',
             'block': 'BasicBlock',
+            'in_channels': 1,  # MISSING PARAMETER 1: Input channel dimension
             'channels': [64, 128, 256, 512],  # Official uses 512 final channels
             'layers': [1, 1, 1, 1],
             'strides': [1, 2, 2, 1],
@@ -173,7 +179,7 @@ def create_official_xgait_model(num_classes=3000):
         },
         'CALayers': {
             'channels': 1024,  # 2 * 512 (concatenated features)
-            'reduction': 32    # 1024 // 32 = 32 intermediate channels
+            'reduction': 32   # 1024 // 32 = 32 intermediate channels
         },
         'CALayersP': {
             'channels': 1024,  # 2 * 512 (concatenated features)
@@ -190,7 +196,8 @@ def create_official_xgait_model(num_classes=3000):
             'in_channels': 256,
             'parts_num': 16
         },
-        'bin_num': [16]
+        'bin_num': [16],
+        'dropout': 0.2  # MISSING PARAMETER 2: Dropout rate for regularization
     }
     
     return OfficialXGait(model_cfg)

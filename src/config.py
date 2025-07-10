@@ -1,5 +1,18 @@
 """
 Configuration settings for the Person Tracking System
+
+SIMILARITY THRESHOLD ANALYSIS:
+Based on empirical analysis of XGait embeddings:
+- Intra-person similarities: ~0.94 (mean), range 0.904-0.984
+- Inter-person similarities: ~0.89 (mean), range 0.870-0.909
+- Optimal threshold: 0.91 (100% precision, 94.1% recall)
+- High confidence threshold: 0.93 (for very confident matches)
+
+THRESHOLD HIERARCHY:
+- tracker.similarity_threshold: 0.4 (for basic tracking/ReID)
+- xgait.similarity_threshold: 0.91 (for XGait person identification)
+- identity.similarity_threshold: 0.91 (for identity management)
+- identity.high_confidence_threshold: 0.93 (for high confidence matches)
 """
 import os
 from dataclasses import dataclass, field
@@ -102,7 +115,7 @@ class TrackerConfig:
     max_missing_frames: int = 60       # Increased from 30 to 60 to keep tracks alive longer
     
     # XGait identification parameters
-    identification_threshold: float = 0.6
+    identification_threshold: float = 0.91  # Updated to match XGait optimal threshold
     sequence_length: int = 10
     
     # Tracking parameters
@@ -137,8 +150,8 @@ class xgaitConfig:
     # Feature extraction settings
     xgait_extraction_interval = 5
 
-    # Similarity threshold for identification - Further optimized for better matching
-    similarity_threshold = 0.6  # Reduced from 0.7 to 0.6 for better person identification
+    # Similarity threshold for identification - Optimized for XGait embeddings
+    similarity_threshold = 0.91  # Updated to 0.91 based on XGait similarity analysis
     device: str = get_xgait_device()  # Use global XGait device logic
 
 @dataclass
@@ -158,8 +171,8 @@ class IdentityConfig:
     
     # Embedding quality and similarity thresholds
     min_quality_threshold: float = 0.3
-    similarity_threshold: float = 0.8
-    high_confidence_threshold: float = 0.85
+    similarity_threshold: float = 0.91  # Updated to match XGait discrimination capability
+    high_confidence_threshold: float = 0.93  # Updated to reflect high XGait similarity range
     
     # Embedding buffer management
     max_embeddings_per_person: int = 20

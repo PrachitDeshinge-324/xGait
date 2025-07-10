@@ -61,11 +61,12 @@ class XGaitAdapter:
         self.gallery_manager = None
         
         # Similarity threshold for identification
-        self.similarity_threshold = 0.7
+        self.similarity_threshold = 0.91
         
         logger.info(f"🎯 XGait Adapter initialized with official implementation")
         logger.info(f"   - Weight compatibility: {'High' if self.model_loaded else 'Low'}")
-        logger.info(f"   - Feature dimensions: 256x64 (parts-based)")
+        logger.info(f"   - Feature dimensions: 256x64 = 16384 (full part-based features)")
+        logger.info(f"   - Using full features for optimal discrimination")
         
     def extract_features_from_sequence(self, silhouettes: List[np.ndarray], 
                                      parsing_masks: List[np.ndarray] = None) -> np.ndarray:
@@ -87,17 +88,49 @@ class XGaitAdapter:
             features = self.xgait_official.extract_features(silhouettes, parsing_masks)
             
             if features.size > 0:
-                # Features shape: (1, 256, 64) - flatten to (256*64,) for compatibility
+                # Features shape: (1, 256, 64) - USE FULL FEATURES FOR BEST DISCRIMINATION
+                # Research shows that full features provide better discrimination than pooled features
                 if len(features.shape) == 3:
-                    return features[0].flatten()  # (256*64,)
+                    # Flatten to use all part-based features: (1, 256, 64) -> (16384,)
+                    features_flat = features.flatten()
+                    return features_flat
+                elif len(features.shape) == 2:
+                    # Already flattened features
+                    return features.flatten()
                 else:
-                    return features[0]  # Already flattened
+                    # Handle other cases
+                    return features.flatten()
             else:
                 return np.array([])
                 
         except Exception as e:
             logger.error(f"Error extracting XGait features: {e}")
             return np.array([])
+    
+    def _reduce_part_features(self, features: np.ndarray) -> np.ndarray:
+        """
+        DEPRECATED: Use full features instead of pooled features for better discrimination
+        This method is kept for compatibility but full features are recommended.
+        
+        Args:
+            features: (256, 64) feature tensor where 256 is feature dim, 64 is parts
+            
+        Returns:
+            (256,) reduced feature vector
+        """
+        # Method 1: Global average pooling across parts
+        features_pooled = np.mean(features, axis=1)  # (256,)
+        
+        # Method 2: Weighted pooling (give more weight to middle parts)
+        # parts_weights = np.exp(-0.1 * np.arange(64))  # Exponential decay
+        # parts_weights = parts_weights / np.sum(parts_weights)
+        # features_weighted = np.sum(features * parts_weights[None, :], axis=1)
+        
+        # Method 3: Max pooling across parts (more discriminative)
+        # features_max = np.max(features, axis=1)  # (256,)
+        
+        # For backward compatibility, use global average pooling
+        return features_pooled
     
     def extract_features(self, silhouette_sequences: List[List[np.ndarray]], 
                         parsing_sequences: List[List[np.ndarray]] = None) -> np.ndarray:
@@ -245,7 +278,73 @@ class XGaitAdapter:
         }
         
         return report
-
+    
+    def compute_similarity(self, features1: np.ndarray, features2: np.ndarray) -> np.ndarray:
+        """
+        Compute cosine similarity between XGait feature vectors with proper normalization
+        
+        Args:
+            features1: First set of features (N, feature_dim)
+            features2: Second set of features (M, feature_dim)
+            
+        Returns:
+            Similarity matrix (N, M)
+        """
+        if features1.size == 0 or features2.size == 0:
+            return np.array([]).reshape(0, 0)
+        
+        # Ensure features are 2D
+        if features1.ndim == 1:
+            features1 = features1.reshape(1, -1)
+        if features2.ndim == 1:
+            features2 = features2.reshape(1, -1)
+        
+        # Apply L2 normalization to improve discriminative power
+        # This is crucial for XGait features to reduce intra-class variance
+        features1_norm = features1 / (np.linalg.norm(features1, axis=1, keepdims=True) + 1e-8)
+        features2_norm = features2 / (np.linalg.norm(features2, axis=1, keepdims=True) + 1e-8)
+        
+        # Compute raw cosine similarity (values in [-1, 1])
+        similarity = np.dot(features1_norm, features2_norm.T)
+        
+        # Return raw cosine similarity - this preserves natural discrimination
+        # Values will be in [-1, 1] range where:
+        # - 1.0 means identical features
+        # - 0.0 means orthogonal features  
+        # - -1.0 means opposite features
+        return similarity
+    
+    def extract_normalized_features(self, silhouettes: List[np.ndarray], 
+                                  parsing_masks: List[np.ndarray] = None) -> np.ndarray:
+        """
+        Extract and normalize XGait features for better discrimination
+        
+        Args:
+            silhouettes: List of silhouette frames
+            parsing_masks: List of parsing mask frames (optional)
+            
+        Returns:
+            Normalized feature vector
+        """
+        # Extract raw features
+        raw_features = self.extract_features_from_sequence(silhouettes, parsing_masks)
+        
+        if raw_features.size == 0:
+            return raw_features
+        
+        # Apply XGait-specific feature normalization
+        # The features are already normalized by the inference module
+        # But we apply additional processing for better discrimination
+        
+        features = raw_features.flatten()
+        
+        # Apply power normalization (similar to VLAD encoding)
+        features = np.sign(features) * np.sqrt(np.abs(features))
+        
+        # Final L2 normalization
+        features_norm = features / (np.linalg.norm(features) + 1e-8)
+        
+        return features_norm
 
 def create_xgait_adapter(model_path: Optional[str] = None, device: str = None, 
                         num_classes: int = 3000) -> XGaitAdapter:

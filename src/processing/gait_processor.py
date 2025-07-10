@@ -143,7 +143,7 @@ class GaitProcessor:
         try:
             start_time = time.time()
             
-            # Resize crop to standard size
+            # Resize crop to standard size (width, height) = (128, 256)
             crop_resized = cv2.resize(crop, (128, 256))
             
             # Step 1: Extract silhouette

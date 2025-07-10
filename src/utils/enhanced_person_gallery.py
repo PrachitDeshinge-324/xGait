@@ -483,7 +483,7 @@ class EnhancedPersonGallery:
     """Enhanced person gallery with movement and orientation profiling"""
     
     def __init__(self, max_embeddings_per_context: int = 5, 
-                 similarity_threshold: float = 0.7, min_confidence: float = 0.3,
+                 similarity_threshold: float = 0.91, min_confidence: float = 0.3,
                  history_length: int = 10):
         self.max_embeddings_per_context = max_embeddings_per_context
         self.similarity_threshold = similarity_threshold

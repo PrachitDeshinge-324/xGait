@@ -35,7 +35,7 @@ class IdentityManager:
         
         self.enhanced_gallery = EnhancedPersonGallery(
             max_embeddings_per_context=20,
-            similarity_threshold=0.6,
+            similarity_threshold=0.91,
             min_confidence=0.3,
             history_length=xgait_sequence_length
         )
