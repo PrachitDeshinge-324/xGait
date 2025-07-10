@@ -88,11 +88,14 @@ class VisualTrackReviewer:
     
     def show_track_crops(self, track_id: int, max_crops: int = 6) -> bool:
         """Display crops for a specific track using matplotlib"""
-        if not self.track_crops or track_id not in self.track_crops:
+        # Use buffer attributes if available (for in-memory data), otherwise use loaded attributes
+        track_crops = getattr(self, 'track_crop_buffer', None) or getattr(self, 'track_crops', {})
+        
+        if not track_crops or track_id not in track_crops:
             print(f"❌ No crops available for track {track_id}")
             return False
         
-        crops = self.track_crops[track_id]
+        crops = track_crops[track_id]
         if not crops:
             print(f"❌ No crops available for track {track_id}")
             return False

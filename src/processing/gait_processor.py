@@ -166,7 +166,7 @@ class GaitProcessor:
                 self.track_crops[track_id].pop(0)
             
             # Step 4: Extract XGait features if conditions are met
-            feature_vector = np.zeros(256)
+            feature_vector = np.zeros(16384)  # XGait full feature dimension (256x64)
             xgait_extracted = False
             
             if (len(self.track_silhouettes[track_id]) >= self.min_sequence_length and 
@@ -202,7 +202,7 @@ class GaitProcessor:
                 except Exception as e:
                     if self.config.verbose:
                         print(f"⚠️  XGait extraction error for track {track_id}: {e}")
-                    feature_vector = np.zeros(256)
+                    feature_vector = np.zeros(16384)  # XGait full feature dimension
             
             processing_time = time.time() - start_time
             
@@ -784,13 +784,13 @@ class GaitProcessor:
                     frame_features.append(feats[-1])
                     frame_track_ids.append(t_id)
             
-            # Get gallery data from enhanced gallery
-            gallery_stats = self.identity_manager.enhanced_gallery.get_gallery_statistics()
+            # Get gallery data from FAISS gallery
+            gallery_stats = self.identity_manager.faiss_gallery.get_gallery_statistics()
             gallery_names = list(gallery_stats.get('persons', {}).keys())
             
-            # For now, we'll skip the similarity visualization since enhanced gallery
-            # doesn't expose individual prototypes in the same way as simple gallery
-            # This would need to be refactored to work with the enhanced gallery structure
+            # For now, we'll skip the similarity visualization since FAISS gallery
+            # stores embeddings differently than the simple gallery structure
+            # This would need to be refactored to work with the FAISS gallery structure
             
             sim_ax = axes[4, 0]
             # Skip similarity visualization for now as it needs refactoring for enhanced gallery

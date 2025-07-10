@@ -614,7 +614,7 @@ class EmbeddingVisualizer:
         Create a comprehensive visualization report
         
         Args:
-            gallery_manager: IdentityGalleryManager instance
+            gallery_manager: Gallery manager instance (FAISS or other)
             output_dir: Directory to save all visualizations
             methods: List of dimensionality reduction methods to use
         """

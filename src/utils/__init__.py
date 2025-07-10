@@ -10,7 +10,7 @@ from .device_utils import (
     get_global_device,
     get_xgait_device
 )
-from .enhanced_person_gallery import EnhancedPersonGallery
+from .faiss_gallery import FAISSPersonGallery
 
 __all__ = [
     "TrackingVisualizer", 
@@ -20,5 +20,5 @@ __all__ = [
     "ensure_tensor_device",
     "get_global_device",
     "get_xgait_device",
-    "EnhancedPersonGallery"
+    "FAISSPersonGallery"
 ]

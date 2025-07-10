@@ -1,6 +1,6 @@
 """
-Enhanced Identity Manager with Movement and Orientation Profiling
-Uses only the EnhancedPersonGallery system for person identification
+FAISS-based Identity Manager for Person Identification
+Uses FAISS vector search for efficient person identification
 """
 
 import numpy as np
@@ -16,28 +16,23 @@ import pickle
 # Add parent directory to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from src.utils.enhanced_person_gallery import EnhancedPersonGallery, MovementType, OrientationType
+from src.utils.faiss_gallery import FAISSPersonGallery
 
 logger = logging.getLogger(__name__)
 
 class IdentityManager:
     """
-    Identity manager using the EnhancedPersonGallery system
+    Identity manager using FAISS gallery system
     """
     
     def __init__(self, config):
         self.config = config
         
-        # Initialize enhanced gallery system
-        # Get XGait sequence length from config
-        from src.config import xgaitConfig
-        xgait_sequence_length = xgaitConfig.min_sequence_length
-        
-        self.enhanced_gallery = EnhancedPersonGallery(
-            max_embeddings_per_context=20,
+        # Initialize FAISS gallery system with correct XGait dimensions
+        self.faiss_gallery = FAISSPersonGallery(
+            embedding_dim=16384,  # XGait embedding dimension (256x64 parts)
             similarity_threshold=0.91,
-            min_confidence=0.3,
-            history_length=xgait_sequence_length
+            max_embeddings_per_person=20
         )
         
         # Tracking data
@@ -54,18 +49,19 @@ class IdentityManager:
         self.visualization_output_dir = Path("visualization_analysis")
         self.visualization_output_dir.mkdir(exist_ok=True)
         
-        logger.info(f"✅ Enhanced Identity Manager initialized")
+        logger.info(f"✅ FAISS Identity Manager initialized")
     
     def load_gallery(self) -> bool:
         """Load gallery state from files"""
         success = False
         
-        # Load enhanced gallery
-        enhanced_gallery_path = self.visualization_output_dir / "enhanced_gallery.json"
-        if enhanced_gallery_path.exists():
-            print(f"[EnhancedGallery] Loading gallery from {enhanced_gallery_path}")
-            self.enhanced_gallery.load_gallery(enhanced_gallery_path, clear_track_associations=True)
-            print(f"[EnhancedGallery] Loaded {len(self.enhanced_gallery.gallery)} known persons")
+        # Load FAISS gallery
+        faiss_gallery_path = self.visualization_output_dir / "faiss_gallery.pkl"
+        if faiss_gallery_path.exists():
+            print(f"[FAISSGallery] Loading gallery from {faiss_gallery_path}")
+            self.faiss_gallery.load_gallery(faiss_gallery_path, clear_track_associations=True)
+            stats = self.faiss_gallery.get_gallery_statistics()
+            print(f"[FAISSGallery] Loaded {stats['total_persons']} known persons")
             success = True
         
         self.gallery_loaded = success
@@ -73,10 +69,10 @@ class IdentityManager:
     
     def save_gallery(self) -> None:
         """Save gallery state to files"""
-        # Save enhanced gallery
-        enhanced_gallery_path = self.visualization_output_dir / "enhanced_gallery.json"
-        print(f"[EnhancedGallery] Saving gallery to {enhanced_gallery_path}")
-        self.enhanced_gallery.save_gallery(enhanced_gallery_path)
+        # Save FAISS gallery
+        faiss_gallery_path = self.visualization_output_dir / "faiss_gallery.pkl"
+        print(f"[FAISSGallery] Saving gallery to {faiss_gallery_path}")
+        self.faiss_gallery.save_gallery(faiss_gallery_path)
             
         # Save track data for manual merging
         self.save_track_data()
@@ -84,57 +80,34 @@ class IdentityManager:
     def assign_or_update_identities(self, frame_track_embeddings: Dict, frame_count: int) -> Dict:
         """
         Assign or update identities for tracks in the current frame
-        Uses the enhanced gallery system
+        Uses the FAISS gallery system
         """
         if not frame_track_embeddings:
             return {}
         
         frame_assignments = {}
         
-        # Process with enhanced gallery system
+        # Process with FAISS gallery system
         assignment_confidences = {}  # Store actual confidences
         for track_id, (embedding, quality) in frame_track_embeddings.items():
-            # Get additional context data
-            if (track_id in self.track_crop_buffer and 
-                track_id in self.track_bbox_buffer and 
-                self.track_crop_buffer[track_id] and 
-                self.track_bbox_buffer[track_id]):
-                
-                latest_crop = self.track_crop_buffer[track_id][-1]
-                latest_bbox = self.track_bbox_buffer[track_id][-1]
-                
-                # Try to identify with enhanced system
-                person_name, confidence, movement_profile = self.enhanced_gallery.identify_person(
-                    embedding, track_id, latest_bbox, latest_crop, frame_count
+            # Try to identify with FAISS system
+            person_name, confidence = self.faiss_gallery.identify_person(embedding, track_id)
+            
+            if person_name:
+                # Update FAISS gallery with new embedding
+                self.faiss_gallery.add_person_embedding(
+                    person_name, track_id, embedding, quality, frame_count
                 )
                 
-                if person_name:
-                    # Update enhanced gallery
-                    self.enhanced_gallery.add_person_embedding(
-                        person_name, track_id, embedding, latest_bbox, 
-                        latest_crop, frame_count, quality
-                    )
-                    
-                    frame_assignments[track_id] = person_name
-                    assignment_confidences[track_id] = confidence  # Store actual confidence
-                    logger.info(f"Enhanced gallery assignment: track {track_id} -> {person_name} "
-                              f"(confidence: {confidence:.3f}, movement: {movement_profile.movement_type.value}, "
-                              f"orientation: {movement_profile.orientation_type.value})")
-                else:
-                    # No match in enhanced gallery - don't create new person automatically
-                    # Let the interactive assignment handle this
-                    if confidence > 0.5:
-                        logger.debug(f"Track {track_id} has no match (confidence: {confidence:.3f}) - will be handled in interactive mode")
+                frame_assignments[track_id] = person_name
+                assignment_confidences[track_id] = confidence  # Store actual confidence
+                logger.info(f"FAISS gallery assignment: track {track_id} -> {person_name} "
+                          f"(confidence: {confidence:.3f})")
             else:
-                # No context data available - try basic identification
-                person_name, confidence, movement_profile = self.enhanced_gallery.identify_person(
-                    embedding, track_id, None, None, frame_count
-                )
-                
-                if person_name:
-                    frame_assignments[track_id] = person_name
-                    assignment_confidences[track_id] = confidence  # Store actual confidence
-                    logger.info(f"Basic enhanced gallery assignment: track {track_id} -> {person_name} (confidence: {confidence:.3f})")
+                # No match in FAISS gallery - don't create new person automatically
+                # Let the interactive assignment handle this
+                if confidence > 0.5:
+                    logger.debug(f"Track {track_id} has no match (confidence: {confidence:.3f}) - will be handled in interactive mode")
         
         # Store for visualization and track assignment tracking
         self.track_identities = {}
@@ -143,7 +116,7 @@ class IdentityManager:
             self.track_identities[track_id] = {
                 'identity': person_name,
                 'confidence': actual_confidence,  # Use actual similarity confidence
-                'is_new': False,  # Enhanced gallery handles new person detection internally
+                'is_new': False,  # FAISS gallery handles new person detection internally
                 'frame_assigned': frame_count
             }
             # Store in track_to_person for interactive mode
@@ -152,7 +125,7 @@ class IdentityManager:
         # Periodic monitoring
         if frame_count % 500 == 0 and frame_count > 0:
             print(f"[IdentityManager] Track summary at frame {frame_count}")
-            self.enhanced_gallery.print_gallery_report()
+            self.faiss_gallery.print_gallery_report()
         
         return frame_assignments
     
@@ -189,7 +162,7 @@ class IdentityManager:
     
     def merge_persons(self, person1_name: str, person2_name: str) -> bool:
         """
-        Merge two persons in the enhanced gallery system
+        Merge two persons in the FAISS gallery system
         
         Args:
             person1_name: Name of the first person (will be kept)
@@ -198,19 +171,19 @@ class IdentityManager:
         Returns:
             True if merge was successful, False otherwise
         """
-        # Merge in enhanced gallery
-        enhanced_success = self.enhanced_gallery.merge_persons(person1_name, person2_name)
-        if enhanced_success:
-            logger.info(f"✅ Enhanced gallery: merged {person2_name} into {person1_name}")
+        # Merge in FAISS gallery
+        faiss_success = self.faiss_gallery.merge_persons(person1_name, person2_name)
+        if faiss_success:
+            logger.info(f"✅ FAISS gallery: merged {person2_name} into {person1_name}")
         else:
-            logger.warning(f"Enhanced gallery merge failed: {person1_name}, {person2_name}")
+            logger.warning(f"FAISS gallery merge failed: {person1_name}, {person2_name}")
         
-        return enhanced_success
+        return faiss_success
     
     def get_gallery_stats(self) -> Dict:
         """Get comprehensive gallery statistics"""
         stats = {
-            'enhanced_gallery': self.enhanced_gallery.get_gallery_statistics()
+            'faiss_gallery': self.faiss_gallery.get_gallery_statistics()
         }
         return stats
     
@@ -223,23 +196,8 @@ class IdentityManager:
     
     def get_all_embeddings(self):
         """Get all embeddings for visualization"""
-        # Convert enhanced gallery embeddings to format expected by visualization
-        embeddings_list = []
-        
-        # Iterate through all persons in the enhanced gallery
-        for person_name, person_data in self.enhanced_gallery.gallery.items():
-            all_person_embeddings = person_data.get_all_embeddings()
-            
-            for person_embedding in all_person_embeddings:
-                # Convert to format: (embedding, identity, track_id, type)
-                embeddings_list.append((
-                    person_embedding.embedding,
-                    person_name,
-                    person_embedding.track_id,
-                    "enhanced_gallery_embedding"
-                ))
-        
-        return embeddings_list
+        # Get embeddings from FAISS gallery
+        return self.faiss_gallery.get_all_embeddings()
     
     def get_track_embeddings_by_track(self):
         """Get track embeddings organized by track for visualization"""
@@ -259,8 +217,8 @@ class IdentityManager:
         print("FINAL IDENTIFICATION SUMMARY")
         print("="*60)
         
-        # Enhanced gallery summary
-        self.enhanced_gallery.print_gallery_report()
+        # FAISS gallery summary
+        self.faiss_gallery.print_gallery_report()
         
         print("="*60)
     

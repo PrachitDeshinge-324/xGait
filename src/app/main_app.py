@@ -442,65 +442,39 @@ class PersonTrackingApp:
                         if previous_person and previous_person != person_name:
                             print(f"🔄 Reassigning track {track_id} from '{previous_person}' to '{person_name}'")
                         
-                        # Check if person already exists in enhanced gallery
-                        person_exists = (person_name in self.identity_manager.enhanced_gallery.gallery)
+                        # Check if person already exists in FAISS gallery
+                        person_exists = self.identity_manager.faiss_gallery.has_person(person_name)
                         
-                        # Create or update person in enhanced gallery
+                        # Create or update person in FAISS gallery
                         if person_exists:
-                            # Update existing person with all embeddings (gallery will handle per-context limits)
-                            if (track_id in self.identity_manager.track_crop_buffer and 
-                                track_id in self.identity_manager.track_bbox_buffer):
-                                crops = self.identity_manager.track_crop_buffer[track_id]
-                                bboxes = self.identity_manager.track_bbox_buffer[track_id]
-                                
-                                embeddings_added = 0
-                                # Add all embeddings - let the gallery handle context-based limits
-                                for i, (embedding, quality) in enumerate(zip(embeddings, qualities)):
-                                    if i < len(crops) and i < len(bboxes):
-                                        success = self.identity_manager.enhanced_gallery.add_person_embedding(
-                                            person_name, track_id, embedding, bboxes[i], 
-                                            crops[i], i, quality
-                                        )
-                                        if success:
-                                            embeddings_added += 1
-                                
-                                if embeddings_added > 0:
-                                    updated_persons.append(person_name)
-                                    print(f"✅ Updated person '{person_name}' in enhanced gallery with track {track_id} ({embeddings_added} embeddings)")
+                            # Update existing person with all embeddings
+                            embeddings_added = 0
+                            # Add all embeddings to FAISS gallery
+                            for i, (embedding, quality) in enumerate(zip(embeddings, qualities)):
+                                success = self.identity_manager.faiss_gallery.add_person_embedding(
+                                    person_name, track_id, embedding, quality, i
+                                )
+                                if success:
+                                    embeddings_added += 1
+                            
+                            if embeddings_added > 0:
+                                updated_persons.append(person_name)
+                                print(f"✅ Updated person '{person_name}' in FAISS gallery with track {track_id} ({embeddings_added} embeddings)")
                         else:
-                            # Create new person with all embeddings from the track (gallery handles per-context limits)
-                            if embeddings and (track_id in self.identity_manager.track_crop_buffer and 
-                                              track_id in self.identity_manager.track_bbox_buffer):
-                                crops = self.identity_manager.track_crop_buffer[track_id]
-                                bboxes = self.identity_manager.track_bbox_buffer[track_id]
-                                
+                            # Create new person with all embeddings from the track
+                            if embeddings:
                                 embeddings_added = 0
-                                # Add all embeddings - the gallery will automatically limit per context (20 per context)
+                                # Add all embeddings to FAISS gallery
                                 for i, (embedding, quality) in enumerate(zip(embeddings, qualities)):
-                                    if i < len(crops) and i < len(bboxes):
-                                        enhanced_success = self.identity_manager.enhanced_gallery.add_person_embedding(
-                                            person_name, track_id, embedding, bboxes[i], 
-                                            crops[i], i, quality
-                                        )
-                                        if enhanced_success:
-                                            embeddings_added += 1
-                                
-                                if embeddings_added > 0:
-                                    created_persons.append(person_name)
-                                    print(f"✅ Created new person '{person_name}' in enhanced gallery from track {track_id} ({embeddings_added} embeddings)")
-                            elif embeddings:
-                                # Fallback: use all embeddings if crops/bboxes are missing
-                                embeddings_added = 0
-                                for i, (embedding, quality) in enumerate(zip(embeddings, qualities)):
-                                    enhanced_success = self.identity_manager.enhanced_gallery.add_person_embedding(
-                                        person_name, track_id, embedding, (0, 0, 100, 100), None, i, quality
+                                    success = self.identity_manager.faiss_gallery.add_person_embedding(
+                                        person_name, track_id, embedding, quality, i
                                     )
-                                    if enhanced_success:
+                                    if success:
                                         embeddings_added += 1
                                 
                                 if embeddings_added > 0:
                                     created_persons.append(person_name)
-                                    print(f"✅ Created new person '{person_name}' in enhanced gallery from track {track_id} ({embeddings_added} embeddings, fallback mode)")
+                                    print(f"✅ Created new person '{person_name}' in FAISS gallery from track {track_id} ({embeddings_added} embeddings)")
                         
                         # Update track mapping
                         self.identity_manager.track_to_person[track_id] = person_name
@@ -511,36 +485,33 @@ class PersonTrackingApp:
                 
                 # No need to save gallery here, it will be saved after this method returns
                 
-                # Show Enhanced Gallery visualization if persons were created
-                if created_persons and hasattr(self.identity_manager, 'enhanced_gallery') and self.identity_manager.enhanced_gallery:
+                # Show FAISS Gallery visualization if persons were created
+                if created_persons:
                     print("\n" + "=" * 60)
-                    print("🎨 ENHANCED GALLERY VISUALIZATION")
+                    print("🎨 FAISS GALLERY VISUALIZATION")
                     print("=" * 60)
                     
-                    # Show detailed enhanced gallery report
-                    self.identity_manager.enhanced_gallery.print_gallery_report()
+                    # Show detailed FAISS gallery report
+                    self.identity_manager.faiss_gallery.print_gallery_report()
                     
                     # Ask if user wants to see individual person details
                     show_details = input(f"\n📋 Show detailed person analysis? (y/n, default=y): ").strip().lower()
                     if show_details != 'n':
                         for person_name in created_persons:
-                            if person_name in self.identity_manager.enhanced_gallery.gallery:
-                                person_data = self.identity_manager.enhanced_gallery.gallery[person_name]
-                                print(f"\n👤 {person_name} - Context Analysis:")
-                                print(f"   📊 Total embeddings: {person_data.total_embeddings}")
-                                print(f"   🎯 Contexts captured: {len(person_data.embeddings_by_context)}")
-                                
-                                for context_key, context_embeddings in person_data.embeddings_by_context.items():
-                                    movement_type, orientation_type = context_key.split('_', 1)
-                                    print(f"   • {movement_type.title()} + {orientation_type.replace('_', ' ').title()}: {len(context_embeddings)} embeddings")
+                            stats = self.identity_manager.faiss_gallery.get_person_summary(person_name)
+                            if stats:
+                                print(f"\n👤 {person_name} - Statistics:")
+                                print(f"   📊 Total embeddings: {stats.get('total_embeddings', 0)}")
+                                print(f"   🎯 Average quality: {stats.get('average_quality', 0):.3f}")
+                                print(f"   📅 Last updated: {stats.get('last_updated', 'Unknown')}")
                 
                 # Print final comprehensive report
                 print("\n" + "=" * 60)
                 print("📊 FINAL IDENTIFICATION SUMMARY")
                 print("=" * 60)
                 
-                # Show enhanced gallery report
-                self.identity_manager.enhanced_gallery.print_gallery_report()
+                # Show FAISS gallery report
+                self.identity_manager.faiss_gallery.print_gallery_report()
                 print("=" * 60)
             else:
                 print("ℹ️  No person assignments made")

@@ -62,7 +62,7 @@ Examples:
                       help='Save debug visualizations to disk')
     
     # Interactive Mode
-    parser.add_argument('--interactive', action='store_true',
+    parser.add_argument('--interactive', action='store_true', default=True,
                       help='Enable interactive mode for manual person identification')
     
     # Performance

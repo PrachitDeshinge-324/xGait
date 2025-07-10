@@ -64,7 +64,7 @@ The XGait package integrates with:
 - `main.py` - Main CLI entry point  
 - `src.app.main_app` - Main tracking application
 - `src.models.xgait_model` - Entry point module (outside the package)
-- `src.utils.simple_identity_gallery` - For person identification
+- `src.utils.faiss_gallery` - FAISS-based person identification gallery
 - `src.utils.embedding_visualization` - For feature visualization
 
 ## Migration Guide
