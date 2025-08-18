@@ -119,11 +119,11 @@ class PersonTrackingApp:
     
     def cleanup(self):
         """Clean up resources"""
-        if self.gait_processor:
-            self.gait_processor.cleanup()
+        # if self.gait_processor:
+        #     self.gait_processor.cleanup()
         
-        if self.video_processor:
-            self.video_processor.cleanup()
+        # if self.video_processor:
+        #     self.video_processor.cleanup()
     
     def process_video(self) -> None:
         """Process the input video and perform tracking"""
@@ -367,6 +367,12 @@ class PersonTrackingApp:
         if not self.gait_processor:
             return {}
         return self.gait_processor.get_statistics()
+    
+    def get_identification_stats(self) -> Dict:
+        """Get person identification statistics"""
+        if not self.identity_manager:
+            return {}
+        return self.identity_manager.get_identification_statistics()
     
     def run_interactive_track_review(self) -> None:
         """Run interactive track review for manual person identification"""

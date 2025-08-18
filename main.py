@@ -177,6 +177,25 @@ def main():
             if config.debug_mode:
                 print(f"   • Debug images saved: {gait_stats['debug_images_saved']}")
         
+        # Show identification statistics
+        identification_stats = app.get_identification_stats()
+        if identification_stats:
+            print(f"\n🧑 Person Identification Results:")
+            print(f"   • Total identifications made: {identification_stats['total_identifications']:,}")
+            print(f"   • Unique persons identified: {identification_stats['unique_persons_identified']}")
+            print(f"   • Tracks with identifications: {identification_stats['tracks_with_identifications']}")
+            print(f"   • Frames with identifications: {identification_stats['frames_with_identifications']:,}")
+            
+            # Show top identified persons
+            person_counts = identification_stats['person_identification_counts']
+            if person_counts:
+                top_persons = sorted(person_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+                print(f"   • Top identified persons:")
+                for person, count in top_persons:
+                    avg_conf = identification_stats['average_confidence_by_person'].get(person, 0.0)
+                    print(f"     - {person}: {count:,} identifications (avg confidence: {avg_conf:.3f})")
+        
+        print("\nℹ️  For detailed identification matrix, check the final summary above.")
         print("\n✅ Application completed successfully!")
         return 0
         

@@ -67,14 +67,16 @@ def get_device_config(device: str) -> Dict[str, Any]:
             "batch_size_multiplier": 0.5
         }
 
+WEIGHTS_DIR = "../Weights"
+
 @dataclass
 class ModelConfig:
     """Model configuration settings"""
-    yolo_model_path: str = "weights/yolo11m.pt"
-    transreid_model_path: str = "weights/transreid_vitbase.pth"
-    xgait_model_path: str = "weights/Gait3D-XGait-120000.pt"
-    parsing_model_path: str = "weights/parsing_u2net.pth"
-    silhoutte_model_path: str = "weights/u2net_fixed.pth"
+    yolo_model_path: str = os.path.join(WEIGHTS_DIR, "yolo11s.pt")
+    transreid_model_path: str = os.path.join(WEIGHTS_DIR, "transreid.pth")
+    xgait_model_path: str = os.path.join(WEIGHTS_DIR, "Gait3D-XGait-120000.pt")
+    parsing_model_path: str = os.path.join(WEIGHTS_DIR, "human_parsing.pth")
+    silhouette_model_path: str = os.path.join(WEIGHTS_DIR, "u2net.pth")
     device: str = get_global_device()
     
     # Model-specific device overrides for compatibility
