@@ -83,3 +83,4 @@ track_samples/
 
 # Keep visualization_analysis folders but ignore their contents
 visualization_analysis*/
+archive/*

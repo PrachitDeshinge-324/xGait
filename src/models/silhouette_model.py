@@ -78,55 +78,89 @@ class SilhouetteExtractor:
             return False
 
     def extract_silhouettes(self, images: List[np.ndarray]) -> List[np.ndarray]:
-        """Extract silhouettes from a list of images."""
+        """Extract silhouettes from a list of images with efficient batch processing."""
         if not images:
             return []
         
         silhouettes = []
+        batch_size = min(8, len(images))  # Process in batches to optimize GPU usage
         
         with torch.no_grad():
-            for i, img in enumerate(images):
-                try:
-                    # Preprocess image
-                    if len(img.shape) == 2:  # Grayscale
-                        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-                    elif img.shape[2] == 4:  # RGBA
-                        img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
-                    
-                    # Validate image
-                    if img is None or img.size == 0:
-                        logger.warning(f"⚠️  Invalid image at index {i}, using zero silhouette")
+            for batch_start in range(0, len(images), batch_size):
+                batch_end = min(batch_start + batch_size, len(images))
+                batch_images = images[batch_start:batch_end]
+                batch_tensors = []
+                
+                # Preprocess batch
+                for i, img in enumerate(batch_images):
+                    try:
+                        # Preprocess image
+                        if len(img.shape) == 2:  # Grayscale
+                            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                        elif img.shape[2] == 4:  # RGBA
+                            img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
+                        
+                        # Validate image
+                        if img is None or img.size == 0:
+                            logger.warning(f"⚠️  Invalid image at index {batch_start + i}, using zero silhouette")
+                            silhouettes.append(np.zeros((256, 128), dtype=np.uint8))
+                            continue
+                        
+                        # Convert to tensor
+                        img_tensor = self.transform(img)
+                        batch_tensors.append(img_tensor)
+                        
+                    except Exception as e:
+                        logger.warning(f"⚠️  Failed to preprocess image {batch_start + i}: {e}")
                         silhouettes.append(np.zeros((256, 128), dtype=np.uint8))
-                        continue
+                
+                if not batch_tensors:
+                    continue
+                
+                # Stack batch and process
+                try:
+                    batch_tensor = torch.stack(batch_tensors).to(self.device)
                     
-                    # Convert to tensor
-                    img_tensor = self.transform(img).unsqueeze(0).to(self.device)
+                    # Forward pass on batch
+                    outputs = self.model(batch_tensor)
+                    predictions = outputs[0]  # Main output
                     
-                    # Forward pass
-                    outputs = self.model(img_tensor)
-                    pred = outputs[0]  # Main output
+                    # Process batch predictions
+                    for i, pred in enumerate(predictions):
+                        try:
+                            # Convert to silhouette with proper normalization
+                            silhouette = pred.squeeze().cpu().numpy()
+                            
+                            # Apply sigmoid to get probabilities (U2Net outputs logits)
+                            silhouette = torch.sigmoid(torch.tensor(silhouette)).numpy()
+                            
+                            # Resize to match parsing mask size (height=256, width=128)
+                            silhouette = cv2.resize(silhouette, (128, 256))
+                            
+                            # Convert to 0-255 range with proper threshold
+                            silhouette = (silhouette * 255).astype(np.uint8)
+                            
+                            # Apply threshold to create binary mask (use lower threshold for better detection)
+                            _, silhouette = cv2.threshold(silhouette, 50, 255, cv2.THRESH_BINARY)
+                            
+                            silhouettes.append(silhouette)
+                            
+                        except Exception as e:
+                            logger.warning(f"⚠️  Failed to process prediction {batch_start + i}: {e}")
+                            silhouettes.append(np.zeros((256, 128), dtype=np.uint8))
                     
-                    # Convert to silhouette with proper normalization
-                    silhouette = pred.squeeze().cpu().numpy()
-                    
-                    # Apply sigmoid to get probabilities (U2Net outputs logits)
-                    silhouette = torch.sigmoid(torch.tensor(silhouette)).numpy()
-                    
-                    # Resize to match parsing mask size (height=256, width=128)
-                    silhouette = cv2.resize(silhouette, (128, 256))
-                    
-                    # Convert to 0-255 range with proper threshold
-                    silhouette = (silhouette * 255).astype(np.uint8)
-                    
-                    # Apply threshold to create binary mask (use lower threshold for better detection)
-                    _, silhouette = cv2.threshold(silhouette, 50, 255, cv2.THRESH_BINARY)
-                    
-                    silhouettes.append(silhouette)
+                    # Clear batch tensor to free GPU memory
+                    del batch_tensor, outputs, predictions
                     
                 except Exception as e:
-                    logger.warning(f"⚠️  Failed to extract silhouette for image {i}: {e}")
-                    # Use zero silhouette as fallback
-                    silhouettes.append(np.zeros((256, 128), dtype=np.uint8))
+                    logger.warning(f"⚠️  Failed to process batch starting at {batch_start}: {e}")
+                    # Add fallback silhouettes for the batch
+                    for _ in range(len(batch_tensors)):
+                        silhouettes.append(np.zeros((256, 128), dtype=np.uint8))
+                
+                # Clear GPU cache periodically
+                if hasattr(torch.cuda, 'empty_cache') and batch_start % 32 == 0:
+                    torch.cuda.empty_cache()
         
         return silhouettes
     

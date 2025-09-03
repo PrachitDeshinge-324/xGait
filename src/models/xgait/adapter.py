@@ -75,7 +75,8 @@ class XGaitAdapter:
         Maintains compatibility with existing API
         """
         if not silhouettes or len(silhouettes) < self.min_sequence_length:
-            return np.array([])
+            logger.debug(f"Sequence too short: {len(silhouettes)} < {self.min_sequence_length}")
+            return None  # Return None instead of empty array to indicate failed extraction
         
         # Official XGait requires both silhouettes and parsing masks
         if parsing_masks is None or len(parsing_masks) != len(silhouettes):
@@ -101,13 +102,12 @@ class XGaitAdapter:
                     # Handle other cases
                     return features.flatten()
             else:
-                return np.array([])
+                logger.debug("XGait extraction returned empty features")
+                return None  # Return None for empty features
                 
         except Exception as e:
             logger.error(f"Error extracting XGait features: {e}")
-            return np.array([])
-    
-    def _reduce_part_features(self, features: np.ndarray) -> np.ndarray:
+            return None  # Return None instead of empty array    def _reduce_part_features(self, features: np.ndarray) -> np.ndarray:
         """
         DEPRECATED: Use full features instead of pooled features for better discrimination
         This method is kept for compatibility but full features are recommended.

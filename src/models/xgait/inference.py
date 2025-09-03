@@ -39,6 +39,11 @@ class OfficialXGaitInference:
         self.input_height = 64
         self.input_width = 44
         
+        # PERF-001 fix: Tensor pooling to prevent memory fragmentation
+        self.tensor_pool = {}  # Cache for reusable tensors
+        self.max_pool_size = 5  # Limit number of cached tensors
+        self.pool_cleanup_counter = 0
+        
         # Load weights if available
         if model_path:
             self.model_loaded = self.load_model_weights(model_path)
@@ -54,6 +59,53 @@ class OfficialXGaitInference:
         logger.info(f"   - Target sequence length: {self.target_sequence_length}")
         logger.info(f"   - Device: {self.device}")
         logger.info(f"   - Weights loaded: {self.model_loaded}")
+    
+    def get_pooled_tensor(self, shape: Tuple[int, ...], dtype: torch.dtype) -> torch.Tensor:
+        """
+        PERF-001 fix: Get a reusable tensor from the pool to prevent memory fragmentation
+        """
+        pool_key = (shape, dtype)
+        
+        if pool_key in self.tensor_pool and len(self.tensor_pool[pool_key]) > 0:
+            # Reuse existing tensor
+            tensor = self.tensor_pool[pool_key].pop()
+            tensor.zero_()  # Clear contents for reuse
+            return tensor
+        else:
+            # Create new tensor and ensure it's on correct device
+            return torch.zeros(shape, dtype=dtype, device=self.device)
+    
+    def return_tensor_to_pool(self, tensor: torch.Tensor):
+        """
+        PERF-001 fix: Return tensor to pool for reuse
+        """
+        if tensor.device != self.device:
+            return  # Don't pool tensors on wrong device
+            
+        pool_key = (tuple(tensor.shape), tensor.dtype)
+        
+        if pool_key not in self.tensor_pool:
+            self.tensor_pool[pool_key] = []
+        
+        # Limit pool size to prevent excessive memory usage
+        if len(self.tensor_pool[pool_key]) < self.max_pool_size:
+            self.tensor_pool[pool_key].append(tensor.detach())
+    
+    def cleanup_tensor_pool(self):
+        """
+        PERF-001 fix: Periodic cleanup of tensor pool and GPU memory
+        """
+        self.pool_cleanup_counter += 1
+        
+        # Clean pool every 10 inference calls
+        if self.pool_cleanup_counter >= 10:
+            self.tensor_pool.clear()
+            self.pool_cleanup_counter = 0
+            
+            # Force GPU memory cleanup
+            if self.device.startswith('cuda'):
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
     
     def load_model_weights(self, model_path: str):
         """Load official XGait weights"""
@@ -146,11 +198,32 @@ class OfficialXGaitInference:
             
             # Keep parsing masks as integers (class IDs 0-6)
             # Do NOT normalize - XGait expects semantic class labels, not normalized values
-            processed_pars.append(par_resized.astype(np.float32))
+            # Maintain integer precision to avoid class label corruption
+            processed_pars.append(par_resized.astype(np.uint8))  # Use uint8 to preserve class IDs exactly
         
-        # Convert to tensors [S, H, W]
-        sils_tensor = torch.FloatTensor(np.array(processed_sils)).to(self.device)
-        pars_tensor = torch.FloatTensor(np.array(processed_pars)).to(self.device)
+        # Convert to tensors [S, H, W] with proper dtype for semantic segmentation
+        sils_array = np.array(processed_sils, dtype=np.float32)
+        pars_array = np.array(processed_pars, dtype=np.int64)  # Keep as integers for semantic labels
+        
+        # PERF-001 fix: Use tensor pooling to prevent memory fragmentation
+        sils_tensor = self.get_pooled_tensor(sils_array.shape, torch.float32)
+        sils_tensor.copy_(torch.from_numpy(sils_array))
+        
+        # Create parsing tensor with proper dtype handling for F.interpolate
+        # The model uses F.interpolate with mode='nearest' which requires float tensors
+        # but preserves exact integer class values due to nearest neighbor interpolation
+        pars_tensor = self.get_pooled_tensor(pars_array.shape, torch.float32)
+        pars_tensor.copy_(torch.from_numpy(pars_array).float())
+        
+        # Validate that semantic class indices are preserved (should be integers 0-6)
+        if torch.any((pars_tensor % 1) != 0):
+            logger.warning("Parsing mask contains non-integer values - potential precision loss detected")
+        
+        unique_values = torch.unique(pars_tensor).long()  # Get unique class IDs as integers
+        expected_classes = set(range(7))  # Classes 0-6 for human parsing
+        actual_classes = set(unique_values.cpu().numpy())
+        if not actual_classes.issubset(expected_classes):
+            logger.warning(f"Parsing mask contains unexpected class values: {sorted(actual_classes)}, expected: {sorted(expected_classes)}")
         
         # Add batch dimension [1, S, H, W]
         sils_tensor = sils_tensor.unsqueeze(0)
@@ -161,23 +234,27 @@ class OfficialXGaitInference:
     def extract_features(self, silhouettes: List[np.ndarray], 
                         parsing_masks: List[np.ndarray]) -> np.ndarray:
         """
-        Extract features using official XGait model with proper normalization
+        Extract features using official XGait model with proper memory management
         """
         try:
             with torch.no_grad():
                 self.model.eval()
                 
-                # Preprocess
+                # Clear any cached gradients
+                if hasattr(torch.cuda, 'empty_cache'):
+                    torch.cuda.empty_cache()
+                
+                # Preprocess with memory-efficient operations
                 pars, sils = self.preprocess_sequence(silhouettes, parsing_masks)
                 
                 # Prepare inputs in official format
                 ipts = [pars, sils]
-                labs = torch.zeros(1).long().to(self.device)  # Dummy labels for inference
+                labs = torch.zeros(1, dtype=torch.long, device=self.device)  # Use proper dtype
                 seqL = [len(silhouettes)]
                 
                 inputs = (ipts, labs, None, None, seqL)
                 
-                # Forward pass
+                # Forward pass with memory management
                 output = self.model(inputs)
                 
                 # Extract inference features
@@ -188,13 +265,32 @@ class OfficialXGaitInference:
                 # L2 normalization to unit sphere for each part
                 features_normalized = torch.nn.functional.normalize(features, p=2, dim=1)
                 
-                # Return features in original shape for post-processing in adapter
-                return features_normalized.cpu().numpy()  # [batch, feature_dim, parts]
+                # Move to CPU and convert to numpy immediately to free GPU memory
+                result = features_normalized.detach().cpu().numpy()  # [batch, feature_dim, parts]
+                
+                # PERF-001 fix: Return tensors to pool and cleanup
+                self.return_tensor_to_pool(sils)
+                self.return_tensor_to_pool(pars)
+                self.cleanup_tensor_pool()
+                
+                # Clear intermediate tensors
+                del features, features_normalized, output, pars, sils, ipts, labs
+                if hasattr(torch.cuda, 'empty_cache'):
+                    torch.cuda.empty_cache()
+                
+                return result
                 
         except Exception as e:
             logger.error(f"Error extracting features: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
+            
+            # PERF-001 fix: Cleanup on error
+            self.cleanup_tensor_pool()
+            
+            # Clear cache on error
+            if hasattr(torch.cuda, 'empty_cache'):
+                torch.cuda.empty_cache()
             return np.array([])
     
     def is_model_loaded(self) -> bool:

@@ -207,13 +207,29 @@ class EmbeddingVisualizer:
         Returns:
             Matplotlib figure
         """
-        # Prepare data
+        # Prepare data - ensure consistent dimensions
         all_embeddings = []
         track_ids = []
         identity_labels = []
         
+        expected_dim = None
         for track_id, embedding_list in embeddings_by_track.items():
             for embedding, identity in embedding_list:
+                # Skip empty or invalid embeddings
+                if embedding is None or len(embedding) == 0:
+                    continue
+                    
+                # Convert to numpy array if needed
+                if isinstance(embedding, list):
+                    embedding = np.array(embedding)
+                    
+                # Ensure consistent dimensions
+                if expected_dim is None:
+                    expected_dim = embedding.shape[0]
+                elif embedding.shape[0] != expected_dim:
+                    logger.warning(f"Skipping embedding with mismatched dimension: expected {expected_dim}, got {embedding.shape[0]}")
+                    continue
+                    
                 all_embeddings.append(embedding)
                 track_ids.append(track_id)
                 identity_labels.append(identity)

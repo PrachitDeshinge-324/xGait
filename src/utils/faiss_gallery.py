@@ -51,14 +51,29 @@ class FAISSPersonGallery:
         self.similarity_threshold = similarity_threshold
         self.max_embeddings_per_person = max_embeddings_per_person
         
+        # Multi-tier similarity thresholds for better identification
+        self.high_confidence_threshold = similarity_threshold  # 0.91 -> high confidence match
+        self.medium_confidence_threshold = similarity_threshold * 0.82  # ~0.75 -> medium confidence  
+        self.low_confidence_threshold = similarity_threshold * 0.65  # ~0.60 -> low confidence
+        
+        # Temporal matching parameters
+        self.temporal_window = 100  # frames to consider for temporal matching
+        self.spatial_tolerance = 200  # pixels for spatial proximity matching
+        
         # FAISS index for fast similarity search
         self.index = faiss.IndexFlatIP(embedding_dim)  # Inner Product (cosine after normalization)
         
-        # Person management
+        # Person management with temporal tracking
         self.person_embeddings: List[PersonEmbedding] = []  # Parallel to FAISS index
         self.person_names: List[str] = []  # Person names corresponding to embeddings
         self.person_counter = 1
         self.name_to_indices: Dict[str, List[int]] = {}  # Map person name to embedding indices
+        self.person_last_seen: Dict[str, int] = {}  # Track when each person was last seen
+        self.pending_persons: Dict[str, List[PersonEmbedding]] = {}  # Buffer for potential matches
+        
+        # Track loaded vs session persons for priority handling
+        self.loaded_persons: set = set()  # Persons loaded from persistent gallery
+        self.session_persons: set = set()  # Persons created in current session
         
         # Statistics
         self.total_embeddings = 0
@@ -101,6 +116,11 @@ class FAISSPersonGallery:
         Returns:
             True if embedding was added successfully
         """
+        # Check for None or empty embeddings
+        if embedding is None or (hasattr(embedding, 'size') and embedding.size == 0):
+            logger.debug(f"Skipping None/empty embedding for person {person_name}")
+            return False
+            
         if embedding.shape[0] != self.embedding_dim:
             logger.error(f"Embedding dimension mismatch: expected {self.embedding_dim}, got {embedding.shape[0]}")
             return False
@@ -122,6 +142,11 @@ class FAISSPersonGallery:
         if person_name not in self.name_to_indices:
             self.name_to_indices[person_name] = []
             self.total_persons += 1
+            
+            # Track as session person if not already loaded from gallery
+            if person_name not in self.loaded_persons:
+                self.session_persons.add(person_name)
+                logger.debug(f"Tracking {person_name} as session person")
         
         # Manage per-person embedding limit
         person_indices = self.name_to_indices[person_name]
@@ -212,18 +237,25 @@ class FAISSPersonGallery:
 
     def identify_person(self, 
                        embedding: np.ndarray,
-                       track_id: Optional[int] = None) -> Tuple[Optional[str], float]:
+                       track_id: Optional[int] = None,
+                       frame_number: Optional[int] = None) -> Tuple[Optional[str], float]:
         """
-        Identify person from embedding
+        Identify person from embedding with multi-tier matching
         
         Args:
             embedding: Query embedding
-            track_id: Optional track ID (not used in this simple implementation)
+            track_id: Optional track ID for temporal consistency
+            frame_number: Optional frame number for temporal analysis
             
         Returns:
             Tuple of (person_name, similarity_score)
         """
         if self.index.ntotal == 0:
+            return None, 0.0
+        
+        # Check for None or empty embeddings
+        if embedding is None or (hasattr(embedding, 'size') and embedding.size == 0):
+            logger.debug("Query embedding is None or empty")
             return None, 0.0
         
         if embedding.shape[0] != self.embedding_dim:
@@ -233,37 +265,71 @@ class FAISSPersonGallery:
         # Normalize query embedding
         normalized_query = self._normalize_embedding(embedding)
         
-        # Search FAISS index
-        similarities, indices = self.index.search(normalized_query.reshape(1, -1), k=1)
+        # Search FAISS index for top-k candidates
+        k = min(5, self.index.ntotal)  # Get top 5 candidates for analysis
+        similarities, indices = self.index.search(normalized_query.reshape(1, -1), k=k)
         
         if len(similarities[0]) == 0:
             return None, 0.0
         
-        best_similarity = similarities[0][0]
-        best_idx = indices[0][0]
+        # Analyze candidates with multi-tier approach
+        best_match = None
+        best_similarity = 0.0
         
-        # Check if embedding was marked for removal or index is invalid
-        if best_idx >= len(self.person_embeddings) or self.person_embeddings[best_idx] is None:
-            # Gallery needs cleanup - trigger it and retry
-            self._cleanup_gallery()
-            if self.index.ntotal == 0:
-                return None, 0.0
-            # Retry search after cleanup
-            similarities, indices = self.index.search(normalized_query.reshape(1, -1), k=1)
-            if len(similarities[0]) == 0:
-                return None, 0.0
-            best_similarity = similarities[0][0]
-            best_idx = indices[0][0]
-            if best_idx >= len(self.person_embeddings) or self.person_embeddings[best_idx] is None:
-                return None, 0.0
+        for i, (similarity, idx) in enumerate(zip(similarities[0], indices[0])):
+            if idx >= len(self.person_embeddings) or self.person_embeddings[idx] is None:
+                continue
+                
+            candidate_person = self.person_names[idx]
+            
+            # High confidence match - accept immediately
+            if similarity >= self.high_confidence_threshold:
+                self._update_person_last_seen(candidate_person, frame_number)
+                return candidate_person, float(similarity)
+            
+            # Medium/Low confidence - apply additional validation
+            if similarity >= self.low_confidence_threshold:
+                # Gallery priority boost - loaded persons get higher priority than session persons
+                gallery_boost = 0.0
+                if candidate_person in self.loaded_persons:
+                    gallery_boost = 0.15  # Strong boost for persons from persistent gallery
+                    logger.debug(f"Gallery priority boost applied for {candidate_person}: +{gallery_boost:.3f}")
+                elif candidate_person in self.session_persons:
+                    gallery_boost = 0.0  # No boost for session-only persons
+                
+                # Temporal validation - prefer recently seen persons
+                temporal_boost = 0.0
+                if frame_number and candidate_person in self.person_last_seen:
+                    frames_since_seen = frame_number - self.person_last_seen[candidate_person]
+                    if frames_since_seen <= self.temporal_window:
+                        # Apply temporal boost (up to 0.1 boost for recent sightings)
+                        # But reduce temporal boost for session persons to avoid overriding gallery priority
+                        max_temporal_boost = 0.05 if candidate_person in self.session_persons else 0.1
+                        temporal_boost = max_temporal_boost * (1.0 - frames_since_seen / self.temporal_window)
+                
+                # Combine all boosts
+                total_boost = gallery_boost + temporal_boost
+                adjusted_similarity = similarity + total_boost
+                
+                logger.debug(f"Candidate {candidate_person}: sim={similarity:.3f}, "
+                           f"gallery_boost={gallery_boost:.3f}, temporal_boost={temporal_boost:.3f}, "
+                           f"adjusted={adjusted_similarity:.3f}")
+                
+                # Check if this is now the best candidate
+                if adjusted_similarity > best_similarity and adjusted_similarity >= self.medium_confidence_threshold:
+                    best_match = candidate_person
+                    best_similarity = similarity  # Store original similarity, not boosted
         
-        best_person = self.person_names[best_idx]
+        if best_match:
+            self._update_person_last_seen(best_match, frame_number)
+            return best_match, float(best_similarity)
         
-        # Check similarity threshold
-        if best_similarity >= self.similarity_threshold:
-            return best_person, float(best_similarity)
-        
-        return None, float(best_similarity)
+        return None, float(similarities[0][0]) if len(similarities[0]) > 0 else 0.0
+    
+    def _update_person_last_seen(self, person_name: str, frame_number: Optional[int]):
+        """Update when a person was last seen"""
+        if frame_number is not None:
+            self.person_last_seen[person_name] = frame_number
     
     def create_new_person(self,
                          track_id: int,
@@ -433,19 +499,43 @@ class FAISSPersonGallery:
             
             # Add embeddings to FAISS index
             embeddings_to_add = []
+            loaded_person_names = set()  # Track which persons are loaded from gallery
             for i, emb in enumerate(self.person_embeddings):
                 if emb is not None:
-                    # Check for dimension compatibility
+                    # Check for dimension compatibility and try to fix
                     if emb.embedding.shape[0] != self.embedding_dim:
                         logger.warning(f"⚠️ Embedding dimension mismatch: gallery expects {self.embedding_dim}, "
-                                     f"loaded embedding has {emb.embedding.shape[0]}. Skipping this embedding.")
-                        continue
+                                     f"loaded embedding has {emb.embedding.shape[0]}. Attempting to reshape/adapt...")
+                        
+                        # Try to reshape if it's a flattened version of expected dimensions
+                        if emb.embedding.size == self.embedding_dim:
+                            emb.embedding = emb.embedding.reshape(-1)
+                            logger.info("✅ Successfully reshaped embedding to correct dimensions")
+                        elif emb.embedding.shape[0] > self.embedding_dim:
+                            # Truncate if too large
+                            emb.embedding = emb.embedding[:self.embedding_dim]
+                            logger.info("✅ Truncated embedding to correct dimensions")
+                        elif emb.embedding.shape[0] < self.embedding_dim:
+                            # Pad if too small
+                            pad_size = self.embedding_dim - emb.embedding.shape[0]
+                            emb.embedding = np.pad(emb.embedding, (0, pad_size), mode='constant', constant_values=0)
+                            logger.info("✅ Padded embedding to correct dimensions")
+                        else:
+                            logger.warning("❌ Could not fix embedding dimensions, skipping")
+                            continue
+                    
                     embeddings_to_add.append(emb.embedding)
                     self.person_names.append(emb.person_name)
+                    loaded_person_names.add(emb.person_name)  # Track loaded persons
+            
+            # Mark all loaded persons as loaded (higher priority)
+            self.loaded_persons.update(loaded_person_names)
+            logger.info(f"📋 Loaded persons marked for priority: {sorted(loaded_person_names)}")
             
             if embeddings_to_add:
                 embeddings_array = np.array(embeddings_to_add)
                 self.index.add(embeddings_array)
+                logger.info(f"✅ Loaded {len(embeddings_to_add)} embeddings into FAISS index")
             elif self.person_embeddings:
                 logger.warning("⚠️ No compatible embeddings found in gallery file. "
                              "This may be due to a dimension mismatch (old 256-dim vs new 16384-dim features).")

@@ -28,14 +28,19 @@ class IdentityManager:
     def __init__(self, config):
         self.config = config
         
-        # Initialize FAISS gallery system with correct XGait dimensions
+        # Get interactive mode setting
+        self.interactive_mode = getattr(config.video, 'interactive_mode', True)
+        print(f"🎮 Identity Manager - Interactive mode: {'Enabled' if self.interactive_mode else 'Disabled'}")
+        logger.info(f"🎮 Identity Manager - Interactive mode: {'Enabled' if self.interactive_mode else 'Disabled'}")
+        
+        # Initialize FAISS gallery system with more reasonable thresholds
         self.faiss_gallery = FAISSPersonGallery(
             embedding_dim=16384,  # XGait embedding dimension (256x64 parts)
-            similarity_threshold=0.70,  # Lowered from 0.91 - more reasonable for person identification
+            similarity_threshold=0.75,  # More realistic threshold for gait identification
             max_embeddings_per_person=20
         )
         
-        # Tracking data
+        # Tracking data with temporal consistency
         self.track_embedding_buffer = defaultdict(list)
         self.track_quality_buffer = defaultdict(list)
         self.track_crop_buffer = defaultdict(list)
@@ -44,6 +49,12 @@ class IdentityManager:
         self.track_to_person = {}
         self.track_identities = {}
         self.gallery_loaded = False
+        
+        # Track temporal information for better identity consistency
+        self.track_last_seen = {}  # track_id -> frame_number
+        self.track_positions = {}  # track_id -> (x, y) center positions
+        self.person_candidate_tracks = defaultdict(list)  # person -> [(track_id, confidence, frame)]
+        self.person_last_seen = {}  # person_name -> frame_number when last seen
         
         # Identification statistics for conclusion matrix
         self.identification_history = defaultdict(list)  # track_id -> [(frame, person_name, confidence)]
@@ -65,10 +76,21 @@ class IdentityManager:
         faiss_gallery_path = self.visualization_output_dir / "faiss_gallery.pkl"
         if faiss_gallery_path.exists():
             print(f"[FAISSGallery] Loading gallery from {faiss_gallery_path}")
-            self.faiss_gallery.load_gallery(faiss_gallery_path, clear_track_associations=True)
-            stats = self.faiss_gallery.get_gallery_statistics()
-            print(f"[FAISSGallery] Loaded {stats['total_persons']} known persons")
-            success = True
+            load_success = self.faiss_gallery.load_gallery(str(faiss_gallery_path), clear_track_associations=True)
+            if load_success:
+                stats = self.faiss_gallery.get_gallery_statistics()
+                print(f"[FAISSGallery] Successfully loaded {stats['total_persons']} known persons")
+                
+                # Initialize person_last_seen for all loaded persons
+                for person_name in self.faiss_gallery.name_to_indices.keys():
+                    if person_name not in self.person_last_seen:
+                        self.person_last_seen[person_name] = 0  # Initialize with frame 0
+                
+                success = True
+            else:
+                print(f"[FAISSGallery] Failed to load gallery from {faiss_gallery_path}")
+        else:
+            print(f"[FAISSGallery] No existing gallery found at {faiss_gallery_path}")
         
         self.gallery_loaded = success
         return success
@@ -93,71 +115,186 @@ class IdentityManager:
         
         frame_assignments = {}
         
-        # Process with FAISS gallery system
         assignment_confidences = {}  # Store actual confidences
         for track_id, (embedding, quality) in frame_track_embeddings.items():
-            # Try to identify with FAISS system
-            person_name, confidence = self.faiss_gallery.identify_person(embedding, track_id)
             
-            if person_name:
-                # Found existing person - update gallery with new embedding
+            # CRITICAL: Check if this track already has a confirmed person assignment
+            if track_id in self.track_to_person:
+                # Use existing assignment for consistency - don't re-identify established tracks
+                person_name = self.track_to_person[track_id]
+                confidence = 0.95  # High confidence for existing assignments
+                logger.debug(f"Track {track_id} maintaining existing assignment: {person_name}")
+                
+                # Update the gallery with new embedding to strengthen the person's profile
                 self.faiss_gallery.add_person_embedding(
                     person_name, track_id, embedding, quality, frame_count
                 )
                 
                 frame_assignments[track_id] = person_name
-                assignment_confidences[track_id] = confidence  # Store actual confidence
+                assignment_confidences[track_id] = confidence
+                continue
+            
+            # Try to identify with FAISS system ONLY if no existing assignment
+            person_name, confidence = self.faiss_gallery.identify_person(
+                embedding, track_id, frame_number=frame_count
+            )
+            
+            # VERY STRICT matching for new tracks to prevent false positives
+            if person_name and confidence >= 0.85:  # Much higher threshold for new track assignments
+                # Strong match found - but double-check it's not a spatial conflict
+                # Check if this person is already assigned to another track in recent frames
+                recent_frames = range(max(0, frame_count - 10), frame_count)
+                person_recently_seen = False
                 
-                # Track identification statistics for conclusion matrix
-                self.identification_history[track_id].append((frame_count, person_name, confidence))
-                self.frame_identifications[frame_count][track_id] = person_name
-                self.person_identification_counts[person_name] += 1
-                self.track_identification_counts[track_id][person_name] += 1
-                logger.info(f"FAISS gallery assignment: track {track_id} -> {person_name} "
-                          f"(confidence: {confidence:.3f})")
-            else:
-                # No match found - create new person automatically
-                # Check if this track already has a consistent assignment
-                if track_id in self.track_to_person:
-                    # Use existing assignment
-                    person_name = self.track_to_person[track_id]
-                    logger.debug(f"Track {track_id} using existing assignment: {person_name}")
+                for recent_frame in recent_frames:
+                    if recent_frame in self.frame_identifications:
+                        for other_track_id, other_person in self.frame_identifications[recent_frame].items():
+                            if other_person == person_name and other_track_id != track_id:
+                                person_recently_seen = True
+                                logger.debug(f"Person {person_name} recently seen in track {other_track_id}, "
+                                           f"creating new person for track {track_id} to avoid confusion")
+                                break
+                        if person_recently_seen:
+                            break
+                
+                if not person_recently_seen:
+                    # Safe to assign - update gallery with new embedding
+                    self.faiss_gallery.add_person_embedding(
+                        person_name, track_id, embedding, quality, frame_count
+                    )
+                    
+                    frame_assignments[track_id] = person_name
+                    assignment_confidences[track_id] = confidence
+                    
+                    # Track identification statistics for conclusion matrix
+                    self.identification_history[track_id].append((frame_count, person_name, confidence))
+                    self.frame_identifications[frame_count][track_id] = person_name
+                    self.person_identification_counts[person_name] += 1
+                    self.track_identification_counts[track_id][person_name] += 1
+                    logger.info(f"FAISS gallery assignment: track {track_id} -> {person_name} "
+                              f"(confidence: {confidence:.3f})")
                 else:
-                    # Create new person for this track
+                    person_name = None  # Force new person creation below
+            
+            # If no strong match or person recently seen, handle based on mode
+            if not person_name or confidence < 0.85:
+                print(f"DEBUG: Track {track_id}, Interactive mode: {self.interactive_mode}, person_name: {person_name}, confidence: {confidence}")
+                if self.interactive_mode:
+                    # INTERACTIVE MODE: Don't create automatic persons - leave unidentified
+                    print(f"DEBUG: INTERACTIVE MODE - Skipping track {track_id}")
+                    logger.info(f"Track {track_id}: No strong gallery match (conf: {confidence:.3f}) - leaving UNIDENTIFIED for interactive assignment")
+                    # Skip this track - don't add to frame_assignments, will show as "UNIDENTIFIED" in visualization
+                    continue
+                else:
+                    # NON-INTERACTIVE MODE: Create new person automatically (old behavior)
+                    print(f"DEBUG: NON-INTERACTIVE MODE - Creating person for track {track_id}")
                     person_name = self.faiss_gallery.create_new_person(
                         track_id=track_id,
                         embedding=embedding,
                         quality=quality,
                         frame_number=frame_count
                     )
-                    logger.info(f"Created new person: {person_name} for track {track_id}")
-                
+                    confidence = 0.8  # Default confidence for new person
+                    logger.info(f"Created new person: {person_name} for track {track_id} "
+                              f"(original confidence: {confidence if 'confidence' in locals() else 'N/A'})")
+            
+            # Add confirmed assignments to gallery and tracking
+            if person_name:  # Only if we have a valid assignment
                 # Add to gallery and assignments
-                self.faiss_gallery.add_person_embedding(
-                    person_name, track_id, embedding, quality, frame_count
-                )
-                
                 frame_assignments[track_id] = person_name
-                assignment_confidences[track_id] = max(0.8, confidence)  # Use minimum confidence for new persons
+                assignment_confidences[track_id] = confidence
                 
                 # Track identification statistics for conclusion matrix
-                self.identification_history[track_id].append((frame_count, person_name, assignment_confidences[track_id]))
+                self.identification_history[track_id].append((frame_count, person_name, confidence))
                 self.frame_identifications[frame_count][track_id] = person_name
                 self.person_identification_counts[person_name] += 1
                 self.track_identification_counts[track_id][person_name] += 1
         
+        # *** CRITICAL: Enforce spatial exclusivity - same person cannot be in multiple locations ***
+        # Check for duplicate person assignments in the same frame
+        person_to_tracks = {}
+        for track_id, person_name in frame_assignments.items():
+            if person_name not in person_to_tracks:
+                person_to_tracks[person_name] = []
+            person_to_tracks[person_name].append((track_id, assignment_confidences.get(track_id, 0.8)))
+        
+        # Count and log spatial conflicts before resolution
+        total_conflicts = sum(1 for track_list in person_to_tracks.values() if len(track_list) > 1)
+        if total_conflicts > 0:
+            logger.warning(f"🚨 FRAME {frame_count}: {total_conflicts} spatial conflicts detected - same person in multiple locations!")
+        
+        # Resolve conflicts - keep only the highest confidence assignment per person
+        resolved_assignments = {}
+        for person_name, track_list in person_to_tracks.items():
+            if len(track_list) > 1:
+                # Multiple tracks assigned to same person - CONFLICT!
+                logger.warning(f"🚨 SPATIAL CONFLICT: Person '{person_name}' assigned to {len(track_list)} tracks in frame {frame_count}")
+                logger.warning(f"   Conflicted tracks: {[f'T{tid}({conf:.2f})' for tid, conf in track_list]}")
+                
+                # Keep the track with highest confidence, reassign others
+                track_list.sort(key=lambda x: x[1], reverse=True)  # Sort by confidence desc
+                best_track_id, best_confidence = track_list[0]
+                
+                logger.info(f"✅ Keeping track {best_track_id} for {person_name} (confidence: {best_confidence:.3f})")
+                resolved_assignments[best_track_id] = person_name
+                
+                # Reassign conflicting tracks
+                for conflicted_track_id, conf in track_list[1:]:
+                    logger.warning(f"⚠️ Reassigning conflicted track {conflicted_track_id} (was {person_name}, conf: {conf:.3f})")
+                    
+                    # Get the original embedding and quality for this track
+                    embedding, quality = frame_track_embeddings[conflicted_track_id]
+                    
+                    # Try to find alternative assignment or create new person
+                    alternative_person = self._find_alternative_assignment(conflicted_track_id, person_name, embedding, frame_count)
+                    if alternative_person:
+                        resolved_assignments[conflicted_track_id] = alternative_person
+                        assignment_confidences[conflicted_track_id] = 0.7  # Lower confidence for reassignment
+                        logger.info(f"➡️ Track {conflicted_track_id} reassigned to {alternative_person}")
+                    else:
+                        # Handle new person creation based on interactive mode
+                        if self.interactive_mode:
+                            # INTERACTIVE MODE: Don't create new persons, leave unidentified
+                            logger.info(f"⚠️ Interactive mode: Track {conflicted_track_id} conflict unresolved - leaving UNIDENTIFIED")
+                            # Don't add to resolved_assignments, will remain unidentified
+                        else:
+                            # NON-INTERACTIVE MODE: Create new person for this conflict
+                            new_person = self.faiss_gallery.create_new_person(
+                                track_id=conflicted_track_id,
+                                embedding=embedding,
+                                quality=quality,
+                                frame_number=frame_count
+                            )
+                            resolved_assignments[conflicted_track_id] = new_person
+                            assignment_confidences[conflicted_track_id] = 0.8  # Default for new person
+                            logger.info(f"🆕 Created new person {new_person} for conflicted track {conflicted_track_id}")
+            else:
+                # No conflict, keep original assignment
+                track_id = track_list[0][0]
+                resolved_assignments[track_id] = person_name
+        
+        # Log resolution summary
+        if total_conflicts > 0:
+            logger.info(f"✅ FRAME {frame_count}: All {total_conflicts} spatial conflicts resolved")
+        
+        # Update frame_assignments with resolved conflicts
+        frame_assignments = resolved_assignments
+        
         # Store for visualization and track assignment tracking
         self.track_identities = {}
         for track_id, person_name in frame_assignments.items():
-            actual_confidence = assignment_confidences.get(track_id, 0.8)  # Use actual confidence
+            actual_confidence = assignment_confidences.get(track_id, 0.8)
             self.track_identities[track_id] = {
                 'identity': person_name,
-                'confidence': actual_confidence,  # Use actual similarity confidence
-                'is_new': False,  # FAISS gallery handles new person detection internally
+                'confidence': actual_confidence,
+                'is_new': person_name not in self.person_last_seen,
                 'frame_assigned': frame_count
             }
-            # Store in track_to_person for interactive mode
+            # Store in track_to_person for consistency
             self.track_to_person[track_id] = person_name
+            # Update temporal tracking
+            self.track_last_seen[track_id] = frame_count
+            self.person_last_seen[person_name] = frame_count
         
         # Periodic monitoring
         if frame_count % 500 == 0 and frame_count > 0:
@@ -168,6 +305,11 @@ class IdentityManager:
     
     def update_track_embeddings(self, track_id: int, embedding, quality: float) -> None:
         """Update embedding buffer for a track"""
+        # Skip None or empty embeddings
+        if embedding is None or (hasattr(embedding, 'size') and embedding.size == 0):
+            logger.debug(f"Skipping None/empty embedding for track {track_id}")
+            return
+            
         self.track_embedding_buffer[track_id].append(embedding)
         self.track_quality_buffer[track_id].append(quality)
         
@@ -637,3 +779,133 @@ class IdentityManager:
         self.print_identification_conclusion_matrix()
         
         print("="*80)
+    
+    def assign_person_manually(self, track_id: int, person_name: str, frame_number: int) -> bool:
+        """
+        Manually assign a person name to a track (for interactive mode)
+        
+        Args:
+            track_id: Track ID to assign
+            person_name: Person name to assign
+            frame_number: Current frame number
+            
+        Returns:
+            True if assignment was successful
+        """
+        if not self.interactive_mode:
+            logger.warning(f"Manual assignment called but interactive mode is disabled")
+            return False
+            
+        try:
+            # Get the most recent embedding for this track
+            if track_id not in self.track_embedding_buffer or not self.track_embedding_buffer[track_id]:
+                logger.error(f"No embeddings available for track {track_id}")
+                return False
+            
+            # Use the most recent embedding and quality
+            embedding = self.track_embedding_buffer[track_id][-1]
+            quality = self.track_quality_buffer[track_id][-1] if self.track_quality_buffer[track_id] else 0.8
+            
+            # Check if person already exists in gallery
+            if person_name in self.faiss_gallery.name_to_indices:
+                # Add embedding to existing person
+                success = self.faiss_gallery.add_person_embedding(
+                    person_name, track_id, embedding, quality, frame_number
+                )
+                logger.info(f"✅ Added track {track_id} to existing person {person_name}")
+            else:
+                # Create new person with this embedding
+                success = self.faiss_gallery.add_person_embedding(
+                    person_name, track_id, embedding, quality, frame_number
+                )
+                logger.info(f"🆕 Created new person {person_name} for track {track_id}")
+            
+            if success:
+                # Update tracking
+                self.track_to_person[track_id] = person_name
+                self.track_identities[track_id] = {
+                    'identity': person_name,
+                    'confidence': 1.0,  # Manual assignment = perfect confidence
+                    'is_new': person_name not in self.person_last_seen,
+                    'frame_assigned': frame_number
+                }
+                
+                # Update temporal tracking
+                self.track_last_seen[track_id] = frame_number
+                self.person_last_seen[person_name] = frame_number
+                
+                # Update identification history
+                self.identification_history[track_id].append((frame_number, person_name, 1.0))
+                self.frame_identifications[frame_number][track_id] = person_name
+                self.person_identification_counts[person_name] += 1
+                self.track_identification_counts[track_id][person_name] += 1
+                
+                logger.info(f"✅ Manual assignment: track {track_id} → {person_name}")
+                return True
+            else:
+                logger.error(f"Failed to add embedding for manual assignment: track {track_id} → {person_name}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error in manual assignment: {e}")
+            return False
+    
+    def get_unidentified_tracks(self) -> List[int]:
+        """Get list of tracks that haven't been identified yet"""
+        all_tracks = set(self.track_embedding_buffer.keys())
+        identified_tracks = set(self.track_to_person.keys())
+        return list(all_tracks - identified_tracks)
+    
+    def _find_alternative_assignment(self, track_id: int, excluded_person: str, embedding, frame_count: int) -> str:
+        """
+        Find alternative person assignment for a conflicted track
+        
+        Args:
+            track_id: Track ID that needs reassignment
+            excluded_person: Person name to exclude from consideration
+            embedding: Track's embedding for similarity search
+            frame_count: Current frame number
+            
+        Returns:
+            Alternative person name or None if no suitable alternative found
+        """
+        try:
+            # Get top matches from FAISS gallery, excluding the conflicted person
+            person_name, confidence = self.faiss_gallery.identify_person(
+                embedding, track_id, frame_number=frame_count
+            )
+            
+            # If the top match is the excluded person, try to get other candidates
+            if person_name == excluded_person:
+                # Try with lower thresholds to find alternative matches
+                distances, indices = self.faiss_gallery.index.search(
+                    embedding.reshape(1, -1).astype(np.float32), 
+                    min(10, len(self.faiss_gallery.person_names))  # Get top 10 or available persons
+                )
+                
+                for i, (distance, idx) in enumerate(zip(distances[0], indices[0])):
+                    if idx >= 0 and idx < len(self.faiss_gallery.person_names):
+                        candidate_person = self.faiss_gallery.person_names[idx]
+                        similarity = 1.0 - distance  # Convert distance to similarity
+                        
+                        # Skip the excluded person and check if similarity is reasonable
+                        if (candidate_person != excluded_person and 
+                            similarity >= self.faiss_gallery.low_confidence_threshold):
+                            logger.debug(f"Alternative assignment found: {candidate_person} "
+                                       f"(similarity: {similarity:.3f})")
+                            return candidate_person
+                
+                logger.debug(f"No suitable alternative found for track {track_id}")
+                return None
+            
+            # If top match is different person and confidence is reasonable, use it
+            elif confidence >= self.faiss_gallery.low_confidence_threshold:
+                logger.debug(f"Alternative assignment: {person_name} (confidence: {confidence:.3f})")
+                return person_name
+            
+            logger.debug(f"Top match confidence too low for track {track_id}: {confidence:.3f}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding alternative assignment for track {track_id}: {e}")
+            return None

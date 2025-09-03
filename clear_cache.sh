@@ -12,6 +12,9 @@ find . -type d -name ".cache" -exec rm -rf {} +
 # Clear Jupyter Notebook checkpoints (if any)
 find . -type d -name ".ipynb_checkpoints" -exec rm -rf {} +
 
+# Clear the .DS_Store from child directories as well
+find . -name ".DS_Store" -delete
+
 rm -rf debug_gait_parsing 
 
 echo "All cache cleared."

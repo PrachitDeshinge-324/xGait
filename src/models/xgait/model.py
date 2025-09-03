@@ -107,6 +107,21 @@ class OfficialXGait(nn.Module):
         outs_pcm_up = self.pcm_up(outs_sil, outs_par, mask_resize)  # [n, c, s, h/4, w]
         outs_pcm_middle = self.pcm_middle(outs_sil, outs_par, mask_resize)  # [n, c, s, h/2, w]
         outs_pcm_down = self.pcm_down(outs_sil, outs_par, mask_resize)  # [n, c, s, h/4, w]
+        
+        # Validate tensor shapes before concatenation
+        if outs_pcm_up.dim() != 5 or outs_pcm_middle.dim() != 5 or outs_pcm_down.dim() != 5:
+            raise RuntimeError(f"PCM outputs have incorrect dimensions: "
+                             f"up={outs_pcm_up.shape}, middle={outs_pcm_middle.shape}, down={outs_pcm_down.shape}")
+        
+        # Ensure dtypes are consistent
+        if outs_pcm_up.dtype != outs_pcm_middle.dtype or outs_pcm_up.dtype != outs_pcm_down.dtype:
+            logger.warning(f"PCM outputs have inconsistent dtypes: "
+                         f"up={outs_pcm_up.dtype}, middle={outs_pcm_middle.dtype}, down={outs_pcm_down.dtype}")
+            # Convert to consistent dtype
+            target_dtype = outs_pcm_up.dtype
+            outs_pcm_middle = outs_pcm_middle.to(dtype=target_dtype)
+            outs_pcm_down = outs_pcm_down.to(dtype=target_dtype)
+        
         outs_pcm = torch.cat((outs_pcm_up, outs_pcm_middle, outs_pcm_down), dim=-2)  # [n, c, s, h, w]
 
         # Temporal Pooling, TP
@@ -137,9 +152,46 @@ class OfficialXGait(nn.Module):
         embed_pcm = self.FCs_pcm(feat_pcm)  # [n, c, p]
         _, logits_pcm = self.BNNecks_pcm(embed_pcm)  # [n, c, p]
 
-        # concatenate four parts features
-        embed_cat = torch.cat((embed_sil, embed_par, embed_gcm, embed_pcm), dim=-1)
-        logits_cat = torch.cat((logits_sil, logits_par, logits_gcm, logits_pcm), dim=-1)
+        # LOGIC-008 fix: Validate tensor shapes and dtypes before concatenation
+        embeddings = [embed_sil, embed_par, embed_gcm, embed_pcm]
+        logits = [logits_sil, logits_par, logits_gcm, logits_pcm]
+        
+        # Validate embedding tensor shapes
+        embed_shapes = [e.shape for e in embeddings]
+        if not all(len(shape) == 3 for shape in embed_shapes):
+            raise RuntimeError(f"Embedding tensors have incorrect dimensions: {embed_shapes}")
+        
+        # Validate logits tensor shapes  
+        logits_shapes = [l.shape for l in logits]
+        if not all(len(shape) == 3 for shape in logits_shapes):
+            raise RuntimeError(f"Logits tensors have incorrect dimensions: {logits_shapes}")
+        
+        # Ensure device consistency
+        embed_devices = [str(e.device) for e in embeddings]
+        if not all(device == embed_devices[0] for device in embed_devices):
+            raise RuntimeError(f"Embedding tensors are on different devices: {embed_devices}")
+            
+        logits_devices = [str(l.device) for l in logits]
+        if not all(device == logits_devices[0] for device in logits_devices):
+            raise RuntimeError(f"Logits tensors are on different devices: {logits_devices}")
+        
+        # Ensure dtype consistency for embeddings
+        embed_dtypes = [e.dtype for e in embeddings]
+        if not all(dtype == embed_dtypes[0] for dtype in embed_dtypes):
+            logger.warning(f"Embedding tensors have inconsistent dtypes: {embed_dtypes}")
+            target_dtype = embed_dtypes[0]
+            embeddings = [e.to(dtype=target_dtype) for e in embeddings]
+        
+        # Ensure dtype consistency for logits
+        logits_dtypes = [l.dtype for l in logits]
+        if not all(dtype == logits_dtypes[0] for dtype in logits_dtypes):
+            logger.warning(f"Logits tensors have inconsistent dtypes: {logits_dtypes}")
+            target_dtype = logits_dtypes[0]
+            logits = [l.to(dtype=target_dtype) for l in logits]
+        
+        # Perform validated concatenation
+        embed_cat = torch.cat(embeddings, dim=-1)
+        logits_cat = torch.cat(logits, dim=-1)
 
         embed = embed_cat
         n, _, s, h, w = sils.size()

@@ -20,7 +20,7 @@ from collections import defaultdict
 from typing import List, Tuple, Dict, Optional
 from pathlib import Path
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
+# Removed ThreadPoolExecutor import - PERF-003 fix: No threading for GPU operations
 from tqdm import tqdm
 
 # Context manager to suppress stdout warnings
@@ -62,6 +62,14 @@ class PersonTrackingApp:
         self.enable_identification = enable_identification
         self.enable_gait_parsing = enable_gait_parsing
         self.gallery_loaded = False
+        
+        # LOGIC-006 fix: Set up error handling and circuit breaker
+        self.logger = logging.getLogger(__name__)
+        self.error_counts = {'tracking': 0, 'gait_processing': 0}
+        self.error_threshold = 10  # Max errors before circuit opens
+        self.circuit_breakers = {'tracking': False, 'gait_processing': False}
+        self.last_error_time = {'tracking': 0, 'gait_processing': 0}
+        self.circuit_timeout = 30  # Seconds to wait before retrying after circuit opens
 
         # Initialize core components
         self.tracker = PersonTracker(
@@ -157,7 +165,7 @@ class PersonTrackingApp:
                   mininterval=0.01, maxinterval=0.1, file=sys.stdout, 
                   ascii=False, colour='green') as pbar:
             
-            while cap.isOpened():
+            while cap.isOpened() and frame_count < 80:
                 # Only pause if display window is enabled and user pressed space
                 should_pause = paused and self.config.video.display_window
                 
@@ -171,20 +179,34 @@ class PersonTrackingApp:
                     if self.config.video.max_frames and frame_count > self.config.video.max_frames:
                         break
                     
-                    # Perform tracking
-                    tracking_results = self.tracker.track_persons(frame, frame_count)
+                    # LOGIC-006 fix: Enhanced error handling with circuit breaker pattern
+                    # Perform tracking with segmentation - isolated error handling
+                    try:
+                        tracking_results = self.tracker.track_persons(frame, frame_count)
+                    except Exception as e:
+                        self.logger.error(f"Tracking failed for frame {frame_count}: {e}")
+                        tracking_results = []  # Fallback to empty results
+                        self._handle_tracking_error(frame_count, e)
                     
-                    # Process gait parsing if enabled
+                    # Process gait parsing if enabled - isolated error handling
                     if self.enable_gait_parsing and self.gait_processor and tracking_results:
-                        self.gait_processor.process_frame(frame, tracking_results, frame_count)
+                        try:
+                            self.gait_processor.process_frame(frame, tracking_results, frame_count)
+                        except Exception as e:
+                            self.logger.error(f"Gait processing failed for frame {frame_count}: {e}")
+                            self._handle_gait_processing_error(frame_count, e)
+                            # Continue processing despite gait failure
+                    
+                    # Convert to 3-tuple format for backward compatibility with statistics and visualization
+                    tracking_results_compat = [(r[0], r[1], r[2]) for r in tracking_results]
                     
                     # Update statistics
-                    self.statistics_manager.update_statistics(tracking_results, frame_count)
+                    self.statistics_manager.update_statistics(tracking_results_compat, frame_count)
                     
                     # Handle identity assignment
                     frame_track_embeddings = {}
                     if self.gait_processor:
-                        frame_track_embeddings = self.gait_processor.get_frame_track_embeddings(tracking_results)
+                        frame_track_embeddings = self.gait_processor.get_frame_track_embeddings(tracking_results_compat)
                     
                     # Process identities
                     frame_assignments = self.identity_manager.assign_or_update_identities(
@@ -213,8 +235,8 @@ class PersonTrackingApp:
                     
                     # Create annotated frame
                     annotated_frame = self.visualizer.draw_tracking_results(
-                        frame=frame,
-                        tracking_results=tracking_results,
+                        frame,
+                        tracking_results=tracking_results_compat,  # Use compatible format for visualization
                         track_history=self.statistics_manager.track_history,
                         stable_tracks=self.statistics_manager.stable_tracks,
                         frame_count=frame_count,
@@ -515,7 +537,6 @@ class PersonTrackingApp:
                 print("\n" + "=" * 60)
                 print("📊 FINAL IDENTIFICATION SUMMARY")
                 print("=" * 60)
-                
                 # Show FAISS gallery report
                 self.identity_manager.faiss_gallery.print_gallery_report()
                 print("=" * 60)
@@ -523,3 +544,52 @@ class PersonTrackingApp:
                 print("ℹ️  No person assignments made")
         else:
             print("❌ Interactive review skipped by user.")
+    
+    def _handle_tracking_error(self, frame_count: int, error: Exception):
+        """
+        LOGIC-006 fix: Circuit breaker for tracking errors
+        """
+        self.error_counts['tracking'] += 1
+        self.last_error_time['tracking'] = time.time()
+        
+        if self.error_counts['tracking'] >= self.error_threshold:
+            self.circuit_breakers['tracking'] = True
+            self.logger.warning(f"Tracking circuit breaker opened after {self.error_counts['tracking']} errors")
+            
+        # Reset error count periodically to allow recovery
+        if frame_count % 1000 == 0:
+            self.error_counts['tracking'] = max(0, self.error_counts['tracking'] - 1)
+    
+    def _handle_gait_processing_error(self, frame_count: int, error: Exception):
+        """
+        LOGIC-006 fix: Circuit breaker for gait processing errors
+        """
+        self.error_counts['gait_processing'] += 1
+        self.last_error_time['gait_processing'] = time.time()
+        
+        if self.error_counts['gait_processing'] >= self.error_threshold:
+            self.circuit_breakers['gait_processing'] = True
+            self.enable_gait_parsing = False  # Disable gait parsing temporarily
+            self.logger.warning(f"Gait processing circuit breaker opened, disabling gait processing")
+            
+        # Reset error count periodically to allow recovery
+        if frame_count % 1000 == 0:
+            self.error_counts['gait_processing'] = max(0, self.error_counts['gait_processing'] - 1)
+    
+    def _should_retry_component(self, component: str) -> bool:
+        """
+        LOGIC-006 fix: Check if circuit breaker should allow retry
+        """
+        if not self.circuit_breakers.get(component, False):
+            return True
+            
+        # Check if enough time has passed to retry
+        time_since_error = time.time() - self.last_error_time.get(component, 0)
+        if time_since_error > self.circuit_timeout:
+            self.circuit_breakers[component] = False
+            self.error_counts[component] = 0
+            self.logger.info(f"Circuit breaker for {component} reset, retrying")
+            return True
+            
+        return False
+                

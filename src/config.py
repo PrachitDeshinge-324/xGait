@@ -72,11 +72,11 @@ WEIGHTS_DIR = "../Weights"
 @dataclass
 class ModelConfig:
     """Model configuration settings"""
-    yolo_model_path: str = os.path.join(WEIGHTS_DIR, "yolo11s.pt")
+    yolo_model_path: str = os.path.join(WEIGHTS_DIR, "../v_2/Trained models/yolo11s_cihp_optimized/weights/best.pt")  # Use segmentation model
     transreid_model_path: str = os.path.join(WEIGHTS_DIR, "transreid.pth")
     xgait_model_path: str = os.path.join(WEIGHTS_DIR, "Gait3D-XGait-120000.pt")
     parsing_model_path: str = os.path.join(WEIGHTS_DIR, "human_parsing.pth")
-    silhouette_model_path: str = os.path.join(WEIGHTS_DIR, "u2net.pth")
+    silhouette_model_path: str = os.path.join(WEIGHTS_DIR, "u2net.pth")  # Keep for backward compatibility
     device: str = get_global_device()
     
     # Model-specific device overrides for compatibility
@@ -145,12 +145,12 @@ class VideoConfig:
 @dataclass
 class xgaitConfig:
     """XGait-specific configuration"""
-    # Sequence buffer settings
-    sequence_buffer_size = 100
-    min_sequence_length = 10
+    # Sequence buffer settings - balanced performance mode
+    sequence_buffer_size = 40  # Moderate size for better XGait success
+    min_sequence_length = 4   # Reduced minimum for faster XGait extraction
 
-    # Feature extraction settings
-    xgait_extraction_interval = 5
+    # Feature extraction settings - balanced performance mode  
+    xgait_extraction_interval = 12  # Moderate interval (every 12 frames)
 
     # Similarity threshold for identification - Optimized for XGait embeddings
     similarity_threshold = 0.91  # Updated to 0.91 based on XGait similarity analysis
@@ -186,10 +186,15 @@ class IdentityConfig:
     show_track_id_in_overlay: bool = True
     use_colored_boxes_for_known_persons: bool = True
     
-    # Performance settings
-    consolidation_interval: int = 500  # frames
+    # Performance settings - optimized for real-time processing
+    consolidation_interval: int = 1000  # frames - increased for less frequent cleanup
     enable_periodic_cleanup: bool = True
-    max_track_history_length: int = 1000
+    max_track_history_length: int = 500  # reduced from 1000 for memory efficiency
+    
+    # Real-time performance optimizations - balanced mode
+    enable_debug_outputs: bool = False  # Disable debug image saving
+    enable_visualization_queue: bool = False  # Disable visualization queue
+    parsing_skip_interval: int = 3  # Process parsing every 3rd frame (balanced performance vs feature quality)
 
 @dataclass
 class SystemConfig:

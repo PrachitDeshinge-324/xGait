@@ -16,7 +16,7 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 from collections import defaultdict, deque
-from typing import List, Tuple, Dict, Set
+from typing import List, Tuple, Dict, Set, Optional
 import math
 
 from models.reid_model import create_reid_model
@@ -28,19 +28,25 @@ class PersonTracker:
     Custom person tracker using appearance-based re-identification with device optimization
     """
     def __init__(self, 
-                 yolo_model_path: str = "weights/yolo11m.pt", 
+                 yolo_model_path: str = "weights/yolo11s-seg.pt",  # Default to segmentation model 
                  device: str = None,
                  config: TrackerConfig = None):
         
         from config import get_global_device
         self.device = device if device is not None else get_global_device()
+        # Enhanced configuration for identity-aware tracking
         self.config = config or TrackerConfig()
+        self.similarity_threshold = 0.65  # Lowered for better track association
+        self.high_confidence_threshold = 0.80  # High confidence matches
+        self.spatial_distance_threshold = 150  # Increased for better re-identification
+        self.temporal_window = 60  # Frames to maintain track memory
+        self.identity_consistency_weight = 0.3  # Weight for identity consistency in matching
         
         # Get device-specific configuration
         self.device_config = get_device_config(device)
         self.device_manager = DeviceManager(device, self.device_config["dtype"])
         
-        # Load YOLO for person detection with device optimization
+        # Load YOLO segmentation model for person detection and segmentation
         self.yolo_model = YOLO(yolo_model_path)
         self.yolo_model.to(device)
         
@@ -59,6 +65,7 @@ class PersonTracker:
         self.track_features: Dict[int, torch.Tensor] = {}
         self.track_history: Dict[int, deque] = defaultdict(lambda: deque(maxlen=self.config.track_history_length))
         self.track_crops: Dict[int, np.ndarray] = {}
+        self.track_masks: Dict[int, np.ndarray] = {}  # Store segmentation masks for tracks
         self.missing_frames: Dict[int, int] = defaultdict(int)
         
         # ID management
@@ -70,9 +77,18 @@ class PersonTracker:
         self.gallery_last_seen = {}  # Frame when each gallery track was last seen
         self.gallery_expiration = 1000  # How long to keep disappeared tracks in gallery
         
-        # Enhanced feature templates
+        # Enhanced feature templates with identity consistency
         self.track_feature_templates = defaultdict(list)  # Multiple templates per track
-        self.max_templates = 3  # Maximum number of feature templates per track
+        self.max_templates = 5  # Increased for better representation
+        
+        # Identity consistency tracking
+        self.track_identity_votes = defaultdict(lambda: defaultdict(int))  # track_id -> {identity: vote_count}
+        self.track_identity_confidence = defaultdict(float)  # track_id -> confidence_in_current_identity
+        self.identity_spatial_memory = {}  # identity -> recent_positions for spatial consistency
+        
+        # Identity-aware tracking attributes for LOGIC-013 fix
+        self.track_stability_score = {}  # track_id -> stability score (0-1)
+        self.recent_assignments = {}  # track_id -> last_frame_assigned
         
         # ID consistency mechanisms
         self.id_switch_cooldown = {}  # Prevent rapid ID switches
@@ -119,6 +135,42 @@ class PersonTracker:
                 crops.append(np.zeros((64, 32, 3), dtype=np.uint8))
         
         return crops
+    
+    def extract_crop_masks(self, masks: List[np.ndarray], boxes: np.ndarray) -> List[np.ndarray]:
+        """
+        Extract crop-level masks from full frame masks using bounding boxes
+        
+        Args:
+            masks: List of full frame segmentation masks
+            boxes: Bounding boxes array (N, 4) in xyxy format
+            
+        Returns:
+            List of cropped mask images
+        """
+        crop_masks = []
+        
+        for i, (mask, box) in enumerate(zip(masks, boxes)):
+            x1, y1, x2, y2 = box.astype(int)
+            
+            # Add padding and ensure valid coordinates
+            padding = 10
+            h, w = mask.shape[:2]
+            x1 = max(0, x1 - padding)
+            y1 = max(0, y1 - padding)
+            x2 = min(w, x2 + padding)
+            y2 = min(h, y2 + padding)
+            
+            # Extract mask crop
+            mask_crop = mask[y1:y2, x1:x2]
+            
+            # Ensure minimum crop size
+            if mask_crop.shape[0] > 32 and mask_crop.shape[1] > 16:
+                crop_masks.append(mask_crop)
+            else:
+                # Create placeholder mask if too small
+                crop_masks.append(np.zeros((64, 32), dtype=np.uint8))
+        
+        return crop_masks
     
     def match_detections_to_tracks(self, 
                                   current_features: torch.Tensor, 
@@ -205,76 +257,142 @@ class PersonTracker:
             # Apply weights to similarity scores
             weighted_similarity = similarity_np * spatial_weights
             
-            # Enhanced assignment with ID consistency
+            # Identity-aware assignment with stability constraints
             used_tracks = set()
             
-            # First pass: use Hungarian algorithm for globally optimal assignment
+            # Phase 1: High-confidence matches (preserve existing identities)
+            high_confidence_threshold = self.similarity_threshold * 1.2
+            
+            # Create identity stability cost matrix
+            identity_cost_matrix = 1.0 - weighted_similarity
+            
+            # Add identity consistency penalty for track switches
+            for det_idx in range(len(current_features)):
+                for track_idx in range(len(active_track_ids)):
+                    track_id = active_track_ids[track_idx]
+                    
+                    # Heavy penalty for switching away from a track that was just matched
+                    if track_id in self.track_stability_score:
+                        stability = self.track_stability_score[track_id]
+                        if stability > 0.8:  # Very stable track
+                            # Reduce cost (encourage keeping stable matches)
+                            identity_cost_matrix[det_idx, track_idx] *= 0.7
+                    
+                    # Penalty for rapid ID switches
+                    if track_id in self.recent_assignments:
+                        frames_since_assignment = frame_number - self.recent_assignments[track_id]
+                        if frames_since_assignment < 5:  # Recent assignment
+                            identity_cost_matrix[det_idx, track_idx] *= 0.8
+            
+            # High threshold mask for conservative matching
+            conservative_mask = weighted_similarity < high_confidence_threshold
+            identity_cost_matrix[conservative_mask] = 1000.0
+            
+            # Phase 1: Conservative Hungarian assignment for high-confidence matches
             from scipy.optimize import linear_sum_assignment
+            detection_indices, track_indices = linear_sum_assignment(identity_cost_matrix)
             
-            # Convert similarities to costs (1 - similarity)
-            cost_matrix = 1.0 - weighted_similarity
-            
-            # Only consider matches above threshold
-            mask = weighted_similarity < self.config.similarity_threshold
-            cost_matrix[mask] = 1000.0  # High cost for below-threshold matches
-            
-            # Find optimal assignment
-            detection_indices, track_indices = linear_sum_assignment(cost_matrix)
-            
-            # Apply assignments if they are valid matches
+            # Apply high-confidence assignments
             for det_idx, track_idx in zip(detection_indices, track_indices):
-                if track_idx < len(active_track_ids) and weighted_similarity[det_idx, track_idx] >= self.config.similarity_threshold:
-                    # Match to active track
-                    assignments.append(active_track_ids[track_idx])
+                if track_idx < len(active_track_ids) and weighted_similarity[det_idx, track_idx] >= high_confidence_threshold:
+                    track_id = active_track_ids[track_idx]
+                    assignments.append(track_id)
                     used_tracks.add(track_idx)
-                elif track_idx >= len(active_track_ids) and weighted_similarity[det_idx, track_idx] >= self.config.similarity_threshold * 1.2:
-                    # Higher threshold for gallery matches (20% higher)
-                    gallery_idx = track_idx - len(active_track_ids)
-                    track_id = gallery_track_ids[gallery_idx]
                     
-                    # Check cooldown period for gallery re-identification
-                    if track_id in self.id_switch_cooldown and \
-                       frame_number - self.id_switch_cooldown[track_id] < self.cooldown_period:
-                        # Still in cooldown, create new ID
-                        assignments.append(self.next_id)
-                        self.next_id += 1
-                    else:
-                        # Re-identify from gallery
-                        assignments.append(track_id)
-                        # Remove from gallery as it's active again
-                        del self.track_gallery[track_id]
-                        del self.gallery_last_seen[track_id]
+                    # Update stability tracking
+                    if track_id not in self.track_stability_score:
+                        self.track_stability_score[track_id] = 0.5
+                    self.track_stability_score[track_id] = min(1.0, self.track_stability_score[track_id] + 0.1)
+                    self.recent_assignments[track_id] = frame_number
                 else:
-                    # No valid match, create new ID
-                    assignments.append(self.next_id)
-                    self.next_id += 1
+                    assignments.append(None)  # Placeholder for unmatched detection
             
-            # Handle unmatched detections
-            for i in range(len(current_features)):
-                if i not in detection_indices:
-                    # Try spatial-only matching for remaining detections
-                    current_center = np.array([(current_boxes[i][0] + current_boxes[i][2]) / 2, 
-                                             (current_boxes[i][1] + current_boxes[i][3]) / 2])
+            # Phase 2: Handle remaining detections with normal threshold
+            for det_idx in range(len(current_features)):
+                if assignments[det_idx] is None:  # Unmatched in phase 1
+                    best_match_idx = -1
+                    best_similarity = 0
                     
-                    min_distance = float('inf')
-                    best_track_idx = -1
+                    # Find best available match
+                    for track_idx in range(len(active_track_ids)):
+                        if track_idx not in used_tracks:
+                            similarity = weighted_similarity[det_idx, track_idx]
+                            if similarity >= self.similarity_threshold and similarity > best_similarity:
+                                best_similarity = similarity
+                                best_match_idx = track_idx
                     
-                    for j, track_id in enumerate(active_track_ids):
-                        if j not in used_tracks and track_id in self.track_history and len(self.track_history[track_id]) > 0:
-                            last_pos = np.array(self.track_history[track_id][-1][:2])
-                            distance = np.linalg.norm(current_center - last_pos)
+                    if best_match_idx >= 0:
+                        track_id = active_track_ids[best_match_idx]
+                        assignments[det_idx] = track_id
+                        used_tracks.add(best_match_idx)
+                        
+            
+            # Phase 3: Check gallery re-identification for remaining detections
+            for det_idx in range(len(current_features)):
+                if assignments[det_idx] is None:  # Still unmatched
+                    best_gallery_match_idx = -1
+                    best_gallery_similarity = 0
+                    
+                    # Check gallery matches
+                    for gallery_idx in range(len(gallery_track_ids)):
+                        gallery_track_idx = len(active_track_ids) + gallery_idx
+                        similarity = weighted_similarity[det_idx, gallery_track_idx]
+                        
+                        if similarity >= self.similarity_threshold * 1.15 and similarity > best_gallery_similarity:
+                            best_gallery_similarity = similarity
+                            best_gallery_match_idx = gallery_idx
+                    
+                    if best_gallery_match_idx >= 0:
+                        track_id = gallery_track_ids[best_gallery_match_idx]
+                        
+                        # Check cooldown period for gallery re-identification
+                        if track_id in self.id_switch_cooldown and \
+                           frame_number - self.id_switch_cooldown[track_id] < self.cooldown_period:
+                            # Still in cooldown, create new ID
+                            assignments[det_idx] = self.next_id
+                            self.next_id += 1
+                        else:
+                            # Re-identify from gallery with reduced stability
+                            assignments[det_idx] = track_id
+                            self.track_stability_score[track_id] = 0.2  # Low stability for gallery matches
+                            self.recent_assignments[track_id] = frame_number
                             
-                            if distance < min_distance and distance < 80.0:  # Very close threshold
-                                min_distance = distance
-                                best_track_idx = j
-                    
-                    if best_track_idx >= 0 and active_similarity_np[i, best_track_idx] > 0.25:
-                        # Match to spatially close track if similarity is reasonable
-                        assignments.append(active_track_ids[best_track_idx])
+                            # Remove from gallery as it's active again
+                            if track_id in self.track_gallery:
+                                del self.track_gallery[track_id]
+                            if track_id in self.gallery_last_seen:
+                                del self.gallery_last_seen[track_id]
                     else:
-                        # Create new track
-                        assignments.append(self.next_id)
-                        self.next_id += 1
+                        # Try spatial-only matching as last resort
+                        current_center = np.array([(current_boxes[det_idx][0] + current_boxes[det_idx][2]) / 2, 
+                                                 (current_boxes[det_idx][1] + current_boxes[det_idx][3]) / 2])
+                        
+                        min_distance = float('inf')
+                        best_spatial_track_idx = -1
+                        
+                        for track_idx in range(len(active_track_ids)):
+                            if track_idx not in used_tracks:
+                                track_id = active_track_ids[track_idx]
+                                if track_id in self.track_history and len(self.track_history[track_id]) > 0:
+                                    last_pos = np.array(self.track_history[track_id][-1][:2])
+                                    distance = np.linalg.norm(current_center - last_pos)
+                                    
+                                    if distance < min_distance and distance < 80.0:  # Very close threshold
+                                        min_distance = distance
+                                        best_spatial_track_idx = track_idx
+                        
+                        if best_spatial_track_idx >= 0 and weighted_similarity[det_idx, best_spatial_track_idx] > 0.25:
+                            # Match to spatially close track if similarity is reasonable
+                            track_id = active_track_ids[best_spatial_track_idx]
+                            assignments[det_idx] = track_id
+                            used_tracks.add(best_spatial_track_idx)
+                            
+                            # Very low stability for spatial-only matches
+                            self.track_stability_score[track_id] = 0.1
+                        else:
+                            # Create new track - last resort
+                            assignments[det_idx] = self.next_id
+                            self.next_id += 1
         else:
             # Fallback: create new IDs
             for _ in range(len(current_features)):
@@ -288,13 +406,14 @@ class PersonTracker:
                  features: torch.Tensor, 
                  boxes: np.ndarray, 
                  crops: List[np.ndarray],
-                 frame_number: int) -> None:
+                 frame_number: int,
+                 masks: List[np.ndarray] = None) -> None:
         """
         Enhanced track update with improved feature management
         """
         active_tracks = set()
         
-        for track_id, feature, box, crop in zip(track_ids, features, boxes, crops):
+        for i, (track_id, feature, box, crop) in enumerate(zip(track_ids, features, boxes, crops)):
             # Update track feature with adaptive exponential moving average
             if track_id in self.track_features:
                 # Adaptive update rate based on track stability
@@ -342,6 +461,10 @@ class PersonTracker:
             # Store crop
             self.track_crops[track_id] = crop
             
+            # Store segmentation mask if available
+            if masks is not None and i < len(masks):
+                self.track_masks[track_id] = masks[i]
+            
             # Reset missing counter and mark as active
             self.missing_frames[track_id] = 0
             active_tracks.add(track_id)
@@ -350,10 +473,14 @@ class PersonTracker:
             if len(self.track_history[track_id]) >= self.config.stable_track_threshold:
                 self.stable_tracks.add(track_id)
     
-        # Process inactive tracks
+        # Process inactive tracks with stability decay
         for track_id in list(self.track_features.keys()):
             if track_id not in active_tracks:
                 self.missing_frames[track_id] += 1
+                
+                # Decay stability score for inactive tracks
+                if track_id in self.track_stability_score:
+                    self.track_stability_score[track_id] = max(0.0, self.track_stability_score[track_id] - 0.02)
                 
                 # Move to gallery instead of immediately removing
                 if self.missing_frames[track_id] > self.config.max_missing_frames:
@@ -380,10 +507,18 @@ class PersonTracker:
             del self.missing_frames[track_id]
         if track_id in self.track_crops:
             del self.track_crops[track_id]
+        if track_id in self.track_masks:
+            del self.track_masks[track_id]
         if track_id in self.track_history:
             del self.track_history[track_id]
         if track_id in self.stable_tracks:
             self.stable_tracks.remove(track_id)
+        
+        # Clean up identity-aware tracking attributes
+        if track_id in self.track_stability_score:
+            del self.track_stability_score[track_id]
+        if track_id in self.recent_assignments:
+            del self.recent_assignments[track_id]
     
     def detect_id_switches(self, track_id: int) -> Tuple[bool, float]:
         """
@@ -414,11 +549,14 @@ class PersonTracker:
         
         return is_switch, distance
     
-    def track_persons(self, frame: np.ndarray, frame_number: int = 0) -> List[Tuple[int, np.ndarray, float]]:
+    def track_persons(self, frame: np.ndarray, frame_number: int = 0) -> List[Tuple[int, np.ndarray, float, Optional[np.ndarray]]]:
         """
-        Main tracking function with enhanced identity consistency
+        Main tracking function with enhanced identity consistency and segmentation masks
+        
+        Returns:
+            List of tuples: (track_id, bbox, confidence, segmentation_mask)
         """
-        # YOLO detection with device-specific optimization
+        # YOLO detection and segmentation with device-specific optimization
         with self.device_manager.autocast_context():
             results = self.yolo_model(
                 frame,
@@ -436,11 +574,31 @@ class PersonTracker:
         boxes = results[0].boxes.xyxy.cpu().numpy()
         confidences = results[0].boxes.conf.cpu().numpy()
         
+        # Extract segmentation masks if available
+        masks = []
+        if hasattr(results[0], 'masks') and results[0].masks is not None:
+            masks_data = results[0].masks.data.cpu().numpy()
+            for mask_data in masks_data:
+                # Resize mask to frame dimensions
+                h, w = frame.shape[:2]
+                mask = cv2.resize(mask_data, (w, h), interpolation=cv2.INTER_NEAREST)
+                mask = (mask > 0.5).astype(np.uint8) * 255  # Convert to binary mask
+                masks.append(mask)
+        else:
+            # Create rectangular masks from bounding boxes as fallback
+            h, w = frame.shape[:2]
+            for box in boxes:
+                x1, y1, x2, y2 = box.astype(int)
+                mask = np.zeros((h, w), dtype=np.uint8)
+                mask[y1:y2, x1:x2] = 255
+                masks.append(mask)
+        
         if len(boxes) == 0:
             return []
         
         # Extract person crops and features
         crops = self.extract_person_crops(frame, boxes)
+        crop_masks = self.extract_crop_masks(masks, boxes)
         features = self.reid_model.extract_features(crops)
         
         if features.numel() == 0:
@@ -450,15 +608,16 @@ class PersonTracker:
         track_ids = self.match_detections_to_tracks(features, boxes, frame_number)
         
         # Update track state with improved feature management
-        self.update_tracks(track_ids, features, boxes, crops, frame_number)
+        self.update_tracks(track_ids, features, boxes, crops, frame_number, crop_masks)
         
         # Apply sequence-based ID correction
         corrected_track_ids = self._verify_and_correct_id_switches(track_ids, boxes, features, frame_number)
         
-        # Return tracking results
+        # Return tracking results with masks
         results_list = []
-        for track_id, box, conf in zip(corrected_track_ids, boxes, confidences):
-            results_list.append((track_id, box, conf))
+        for i, (track_id, box, conf) in enumerate(zip(corrected_track_ids, boxes, confidences)):
+            mask = masks[i] if i < len(masks) else None
+            results_list.append((track_id, box, conf, mask))
         
         return results_list
 

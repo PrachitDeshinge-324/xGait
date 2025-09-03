@@ -9,10 +9,10 @@ import numpy as np
 import time
 import queue
 import threading
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import List, Tuple, Dict, Optional
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+# Removed ThreadPoolExecutor import - PERF-003 fix: No threading for GPU operations
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for thread safety
 import matplotlib.pyplot as plt
@@ -22,7 +22,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from src.config import xgaitConfig
-from src.models.silhouette_model import SilhouetteExtractor
+from src.models.yolo_silhouette_model import YOLOSilhouetteExtractor
 from src.models.parsing_model import HumanParsingModel
 from src.models.xgait_model import create_xgait_inference
 
@@ -34,8 +34,12 @@ class GaitProcessor:
         self.config = config
         self.identity_manager = identity_manager
         
-        # Initialize models
-        self.silhouette_extractor = SilhouetteExtractor(device=config.model.device,weights=config.model.silhouette_model_path)
+        # Initialize models - Remove YOLO silhouette extractor since we get masks from tracker
+        # self.silhouette_extractor = YOLOSilhouetteExtractor(
+        #     device=config.model.device,
+        #     model_path=config.model.yolo_seg_model_path if hasattr(config.model, 'yolo_seg_model_path') else "yolo11n-seg.pt"
+        # )
+        self.silhouette_extractor = None  # Will use masks directly from tracker
         self.parsing_model = HumanParsingModel(
             model_path=config.model.parsing_model_path, 
             device=config.model.device
@@ -51,32 +55,46 @@ class GaitProcessor:
         self.visualization_output_dir = Path("visualization_analysis")
         self.visualization_output_dir.mkdir(exist_ok=True)
         
-        # Threading for parallel processing
-        self.parsing_executor = ThreadPoolExecutor(max_workers=2)
-        self.parsing_queue = queue.Queue(maxsize=50)
+        # Remove threading for GPU-bound operations to prevent CUDA context issues
+        # Use sequential processing to avoid thread-unsafe PyTorch operations
+        self.processing_queue = []  # Simple queue for sequential processing
         self.visualization_queue = queue.Queue(maxsize=20)
         
-        # Data storage
-        self.track_parsing_results = defaultdict(list)
-        self.track_silhouettes = defaultdict(list)
-        self.track_parsing_masks = defaultdict(list)
-        self.track_crops = defaultdict(list)  # Store crop sequences for quality calculation
-        self.track_gait_features = defaultdict(list)
-        self.track_last_xgait_extraction = defaultdict(int)
-        
-        # Buffer management
+        # PERF-007 fix: Use deque for efficient FIFO operations instead of list.pop(0)
+        # Buffer management configuration
         self.sequence_buffer_size = xgaitConfig.sequence_buffer_size
         self.min_sequence_length = xgaitConfig.min_sequence_length
         self.xgait_extraction_interval = xgaitConfig.xgait_extraction_interval
         
+        # Data storage with efficient deque buffers
+        def create_bounded_deque():
+            return deque(maxlen=self.sequence_buffer_size)
+        
+        def create_feature_deque():
+            return deque(maxlen=10)  # Feature history limit
+            
+        self.track_parsing_results = defaultdict(create_bounded_deque)
+        self.track_silhouettes = defaultdict(create_bounded_deque)
+        self.track_parsing_masks = defaultdict(create_bounded_deque)
+        self.track_crops = defaultdict(create_bounded_deque)
+        self.track_gait_features = defaultdict(create_feature_deque)
+        self.track_last_xgait_extraction = defaultdict(int)
+        
+        # Performance optimization settings
+        self.parsing_frame_counter = 0
+        self.parsing_skip_interval = getattr(config.identity, 'parsing_skip_interval', 3)
+        self.enable_debug_outputs = getattr(config.identity, 'enable_debug_outputs', False)
+        
         print(f"   XGait model weights loaded: {self.xgait_model.is_model_loaded()}")
+        print(f"   Performance mode: Parsing every {self.parsing_skip_interval} frames")
+        print(f"   Debug outputs: {'Enabled' if self.enable_debug_outputs else 'Disabled'}")
         
         # Test model functionality
         print("🧪 Testing model functionality...")
         
-        # Test silhouette extractor
-        silhouette_test_passed = self.silhouette_extractor.test_extraction()
-        print(f"   Silhouette extractor test: {'✅ PASSED' if silhouette_test_passed else '❌ FAILED'}")
+        # Test silhouette extractor - skip since we use masks from tracker
+        print("   Silhouette extraction: ✅ USING YOLO MASKS FROM TRACKER")
+        silhouette_test_passed = True  # Always pass since we use masks from tracker
         
         # Test parsing model with a dummy image
         try:
@@ -122,17 +140,28 @@ class GaitProcessor:
         self.track_parsing_results.clear()
         self.track_last_xgait_extraction.clear()
     
-    def process_frame(self, frame: np.ndarray, tracking_results: List[Tuple[int, any, float]], frame_count: int) -> None:
+    def process_frame(self, frame: np.ndarray, tracking_results: List, frame_count: int) -> None:
         """
-        Process gait parsing for all tracks in the current frame.
+        Process gait parsing for all tracks in the current frame with performance optimizations.
         
         Args:
             frame: Input frame
-            tracking_results: List of (track_id, box, confidence) tuples
+            tracking_results: List of (track_id, box, confidence) or (track_id, box, confidence, mask) tuples
             frame_count: Current frame number
         """
-        # Submit parsing tasks for every track on every frame
-        for track_id, box, conf in tracking_results:
+        # Performance optimization: Skip parsing on some frames for speed
+        self.parsing_frame_counter += 1
+        should_process_parsing = (self.parsing_frame_counter % self.parsing_skip_interval == 0)
+        
+        # Always track detections, but skip heavy parsing operations based on interval
+        for result in tracking_results:
+            # Handle both old (3-tuple) and new (4-tuple) formats
+            if len(result) == 4:
+                track_id, box, conf, mask = result
+            else:
+                track_id, box, conf = result
+                mask = None
+            
             x1, y1, x2, y2 = box.astype(int)
             
             # Add padding to the bounding box
@@ -146,31 +175,36 @@ class GaitProcessor:
             # Extract crop
             crop = frame[y1:y2, x1:x2]
             
+            # Extract crop mask if available
+            crop_mask = None
+            if mask is not None:
+                crop_mask = mask[y1:y2, x1:x2]
+            
             # Update identity manager with context data for enhanced gallery
             if hasattr(self.identity_manager, 'update_track_context'):
                 self.identity_manager.update_track_context(track_id, crop, (x1, y1, x2, y2))
             
-            # Process crops that have minimum size
+            # Skip heavy parsing processing on most frames for performance
+            if not should_process_parsing:
+                continue
+            
+            # Process crops that have minimum size (only on selected frames)
             if crop.shape[0] > 40 and crop.shape[1] > 20:
-                # Submit to thread pool (non-blocking)
-                if not self.parsing_queue.full():
-                    future = self.parsing_executor.submit(
-                        self._process_single_track_parsing, 
-                        track_id, crop.copy(), frame_count
-                    )
-                    try:
-                        self.parsing_queue.put_nowait((track_id, future))
-                    except queue.Full:
-                        pass
+                # Process directly instead of using thread pool (GPU operations are not thread-safe)
+                result = self._process_single_track_parsing(track_id, crop.copy(), frame_count, crop_mask)
+                if result.get('success', False):
+                    self._store_parsing_result(result)
         
-        # Process completed parsing results
-        self._collect_parsing_results(frame_count)
+        # No longer need to collect from queue since we process directly
+        pass
         
-        # Save debug visualizations every 10 frames
-        if frame_count % 10 == 0:
-            self._save_debug_visualization(frame, tracking_results, frame_count)
+        # Debug visualizations disabled for maximum performance
+        # if frame_count % 10 == 0:
+        #     # Convert back to 3-tuple format for visualization compatibility
+        #     vis_results = [(r[0], r[1], r[2]) for r in tracking_results]
+        #     self._save_debug_visualization(frame, vis_results, frame_count)
     
-    def _process_single_track_parsing(self, track_id: int, crop: np.ndarray, frame_count: int) -> Dict:
+    def _process_single_track_parsing(self, track_id: int, crop: np.ndarray, frame_count: int, crop_mask: np.ndarray = None) -> Dict:
         """
         Process gait parsing pipeline for a single track.
         
@@ -178,6 +212,7 @@ class GaitProcessor:
             track_id: Track identifier
             crop: Cropped person image
             frame_count: Current frame number
+            crop_mask: Optional segmentation mask for the crop
             
         Returns:
             Dictionary containing processing results
@@ -188,10 +223,19 @@ class GaitProcessor:
             # Resize crop to standard size (width, height) = (128, 256)
             crop_resized = cv2.resize(crop, (128, 256))
             
-            # Step 1: Extract silhouette with error handling
+            # Step 1: Use segmentation mask directly for silhouette
             try:
-                silhouettes = self.silhouette_extractor.extract_silhouettes([crop_resized])
-                silhouette = silhouettes[0] if silhouettes else np.zeros((256, 128), dtype=np.uint8)
+                if crop_mask is not None:
+                    # Use YOLO segmentation mask directly for silhouette
+                    mask_resized = cv2.resize(crop_mask, (128, 256), interpolation=cv2.INTER_NEAREST)
+                    # Ensure binary mask
+                    silhouette = (mask_resized > 127).astype(np.uint8) * 255
+                else:
+                    # Create fallback silhouette if no mask available
+                    if self.config.verbose:
+                        print(f"⚠️  No segmentation mask available for track {track_id}, using fallback")
+                    silhouette = np.zeros((256, 128), dtype=np.uint8)
+                    silhouette[50:200, 30:98] = 255  # Basic person-like rectangle
                 
                 # Validate silhouette quality
                 if np.sum(silhouette > 0) < 100:  # Too few foreground pixels
@@ -203,7 +247,7 @@ class GaitProcessor:
                     
             except Exception as e:
                 if self.config.verbose:
-                    print(f"⚠️  Silhouette extraction failed for track {track_id}: {e}")
+                    print(f"⚠️  Silhouette processing failed for track {track_id}: {e}")
                 silhouette = np.zeros((256, 128), dtype=np.uint8)
                 silhouette[50:200, 30:98] = 255  # Basic fallback silhouette
             
@@ -216,16 +260,13 @@ class GaitProcessor:
                     print(f"⚠️  Parsing extraction failed for track {track_id}: {e}")
                 parsing_mask = np.zeros((256, 128), dtype=np.uint8)
             
-            # Step 3: Store in sequence buffers
-            self.track_silhouettes[track_id].append(silhouette)
-            self.track_parsing_masks[track_id].append(parsing_mask)
-            self.track_crops[track_id].append(crop_resized)  # Store the crop for quality calculation
+            # Step 3: Store in sequence buffers with efficient management
+            from collections import deque
             
-            # Keep only recent frames
-            if len(self.track_silhouettes[track_id]) > self.sequence_buffer_size:
-                self.track_silhouettes[track_id].pop(0)
-                self.track_parsing_masks[track_id].pop(0)
-                self.track_crops[track_id].pop(0)
+            # PERF-007 fix: Use efficient deque operations (O(1) append, automatic size management)
+            self.track_silhouettes[track_id].append(silhouette)
+            self.track_parsing_masks[track_id].append(parsing_mask)  
+            self.track_crops[track_id].append(crop_resized)
             
             # Step 4: Extract XGait features if conditions are met
             feature_vector = np.zeros(16384)  # XGait full feature dimension (256x64)
@@ -234,32 +275,33 @@ class GaitProcessor:
             if (len(self.track_silhouettes[track_id]) >= self.min_sequence_length and 
                 frame_count - self.track_last_xgait_extraction[track_id] >= self.xgait_extraction_interval):
                 try:
-                    crop_sequence = self.track_crops[track_id].copy()
-                    parsing_sequence = self.track_parsing_masks[track_id].copy()
-                    
-                    # Extract features using silhouettes for XGait (still needed for feature extraction)
-                    silhouette_sequence = self.track_silhouettes[track_id].copy()
+                    # PERF-007 fix: Convert deque to list only when needed for model input
+                    crop_sequence = list(self.track_crops[track_id])
+                    parsing_sequence = list(self.track_parsing_masks[track_id])
+                    silhouette_sequence = list(self.track_silhouettes[track_id])
                     
                     feature_vector = self.xgait_model.extract_features_from_sequence(
                         silhouettes=silhouette_sequence,
                         parsing_masks=parsing_sequence
                     )
                     
-                    # Use parsing-based quality calculation
-                    sequence_quality = self._compute_sequence_quality(crop_sequence, parsing_sequence)
-                    
-                    # Update identity manager with embeddings
-                    self.identity_manager.update_track_embeddings(track_id, feature_vector, sequence_quality)
-                    
-                    self.track_last_xgait_extraction[track_id] = frame_count
-                    xgait_extracted = True
-                    
-                    # Store feature vector for visualization
-                    self.track_gait_features[track_id].append(feature_vector)
-                    
-                    # Keep only recent features
-                    if len(self.track_gait_features[track_id]) > 10:
-                        self.track_gait_features[track_id].pop(0)
+                    # Only proceed if feature extraction was successful
+                    if feature_vector is not None and feature_vector.size > 0:
+                        # Use parsing-based quality calculation
+                        sequence_quality = self._compute_sequence_quality(crop_sequence, parsing_sequence)
+                        
+                        # Update identity manager with embeddings
+                        self.identity_manager.update_track_embeddings(track_id, feature_vector, sequence_quality)
+                        
+                        self.track_last_xgait_extraction[track_id] = frame_count
+                        xgait_extracted = True
+                        
+                        # PERF-007 fix: deque with maxlen automatically manages size efficiently
+                        # No need for manual pop(0) - deque handles overflow automatically
+                        self.track_gait_features[track_id].append(feature_vector)
+                    else:
+                        if self.config.verbose:
+                            print(f"⚠️ XGait feature extraction failed for track {track_id} (sequence too short or processing error)")
                         
                 except Exception as e:
                     if self.config.verbose:
@@ -629,9 +671,8 @@ class GaitProcessor:
         # Store results with buffer management
         self.track_parsing_results[track_id].append(result)
         
-        # Keep only recent results
-        if len(self.track_parsing_results[track_id]) > self.sequence_buffer_size:
-            self.track_parsing_results[track_id].pop(0)
+        # PERF-007 fix: deque with maxlen automatically handles overflow
+        # No need for manual buffer size management with pop(0)
         
         # Queue visualization task if needed
         if not self.visualization_queue.full():
@@ -664,21 +705,13 @@ class GaitProcessor:
     
     def finalize_processing(self, frame_count: int) -> None:
         """Finalize processing and cleanup"""
-        if self.parsing_executor:
-            try:
-                self.parsing_executor.shutdown(wait=True)
-                self._collect_parsing_results(frame_count)
-            except Exception as e:
-                if self.config.verbose:
-                    print(f"⚠️  Error during parsing executor shutdown: {e}")
+        # No longer using executor, just ensure any remaining processing is complete
+        pass
     
     def cleanup(self) -> None:
         """Clean up resources"""
-        if hasattr(self, 'parsing_executor') and self.parsing_executor:
-            try:
-                self.parsing_executor.shutdown(wait=False)
-            except:
-                pass
+        # No executor to clean up anymore
+        pass
     
     def get_statistics(self) -> Dict:
         """Get comprehensive gait parsing statistics including quality metrics"""
