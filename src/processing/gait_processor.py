@@ -148,7 +148,7 @@ class GaitProcessor:
             frame: Input frame
             tracking_results: List of (track_id, box, confidence) or (track_id, box, confidence, mask) tuples
             frame_count: Current frame number
-        """
+        """        
         # Performance optimization: Skip parsing on some frames for speed
         self.parsing_frame_counter += 1
         should_process_parsing = (self.parsing_frame_counter % self.parsing_skip_interval == 0)
@@ -199,10 +199,10 @@ class GaitProcessor:
         pass
         
         # Debug visualizations disabled for maximum performance
-        # if frame_count % 10 == 0:
-        #     # Convert back to 3-tuple format for visualization compatibility
-        #     vis_results = [(r[0], r[1], r[2]) for r in tracking_results]
-        #     self._save_debug_visualization(frame, vis_results, frame_count)
+        if frame_count % 10 == 0:
+            # Convert back to 3-tuple format for visualization compatibility
+            vis_results = [(r[0], r[1], r[2]) for r in tracking_results]
+            self._save_debug_visualization(frame, vis_results, frame_count)
     
     def _process_single_track_parsing(self, track_id: int, crop: np.ndarray, frame_count: int, crop_mask: np.ndarray = None) -> Dict:
         """
@@ -757,14 +757,19 @@ class GaitProcessor:
                 return
             
             fig, axes = plt.subplots(5, max_tracks_to_show, figsize=(max_tracks_to_show * 4, 20))
+            # Ensure axes is always 2D
             if max_tracks_to_show == 1:
+                # For single track, reshape to (5, 1)
                 axes = axes.reshape(5, 1)
+            elif axes.ndim == 1:
+                # For other cases where axes might be 1D
+                axes = axes.reshape(-1, 1)
             
             fig.suptitle(f'Frame {frame_count} - Complete GaitParsing Pipeline Results', 
                         fontsize=16, fontweight='bold')
             
             # Row labels
-            row_labels = ['Person Crop', 'U²-Net Silhouette', 'GaitParsing Mask', 'XGait Features', 'Cosine Similarity']
+            row_labels = ['Person Crop', 'Silhouette', 'Parsing Mask', 'XGait Features', 'Cosine Similarity']
             
             for idx, (track_id, box, conf) in enumerate(tracking_results[:max_tracks_to_show]):
                 col_idx = idx
@@ -783,7 +788,7 @@ class GaitProcessor:
                     crop_resized = cv2.resize(crop, (128, 256))
                     
                     # Row 1: Original crop
-                    ax = axes[0, col_idx] if max_tracks_to_show > 1 else axes[0]
+                    ax = axes[0, col_idx]
                     ax.imshow(cv2.cvtColor(crop_resized, cv2.COLOR_BGR2RGB))
                     ax.set_title(f'Track {track_id}\\nConf: {conf:.2f}', fontsize=10)
                     ax.axis('off')
@@ -792,7 +797,7 @@ class GaitProcessor:
                                transform=ax.transAxes, fontsize=12, fontweight='bold')
                     
                     # Row 2: Silhouette
-                    ax = axes[1, col_idx] if max_tracks_to_show > 1 else axes[1]
+                    ax = axes[1, col_idx]
                     if track_id in self.track_silhouettes and len(self.track_silhouettes[track_id]) > 0:
                         latest_silhouette = self.track_silhouettes[track_id][-1]
                         ax.imshow(latest_silhouette, cmap='gray')
@@ -806,7 +811,7 @@ class GaitProcessor:
                                transform=ax.transAxes, fontsize=12, fontweight='bold')
                     
                     # Row 3: Parsing mask
-                    ax = axes[2, col_idx] if max_tracks_to_show > 1 else axes[2]
+                    ax = axes[2, col_idx]
                     if track_id in self.track_parsing_results and len(self.track_parsing_results[track_id]) > 0:
                         latest_result = self.track_parsing_results[track_id][-1]
                         parsing_mask = latest_result.get('parsing_mask', np.zeros((256, 128), dtype=np.uint8))
@@ -841,7 +846,7 @@ class GaitProcessor:
                                transform=ax.transAxes, fontsize=12, fontweight='bold')
                     
                     # Row 4: XGait features
-                    ax = axes[3, col_idx] if max_tracks_to_show > 1 else axes[3]
+                    ax = axes[3, col_idx]
                     if track_id in self.track_gait_features and len(self.track_gait_features[track_id]) > 0:
                         latest_features = self.track_gait_features[track_id][-1]
                         if latest_features.size > 0 and np.any(latest_features != 0):

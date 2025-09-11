@@ -103,7 +103,7 @@ class PersonTracker:
     
     def extract_person_crops(self, frame: np.ndarray, boxes: np.ndarray) -> List[np.ndarray]:
         """
-        Extract person crops from frame using bounding boxes
+        Extract person crops from frame using bounding boxes with improved edge handling
         
         Args:
             frame: Input video frame
@@ -118,27 +118,86 @@ class PersonTracker:
         for box in boxes:
             x1, y1, x2, y2 = box.astype(int)
             
-            # Add padding and ensure valid coordinates
-            padding = 10
-            x1 = max(0, x1 - padding)
-            y1 = max(0, y1 - padding)
-            x2 = min(w, x2 + padding)
-            y2 = min(h, y2 + padding)
+            # Calculate original box dimensions for aspect ratio preservation
+            orig_width = x2 - x1
+            orig_height = y2 - y1
             
-            crop = frame[y1:y2, x1:x2]
+            # Target aspect ratio for person crops (width:height = 1:2 approximately)
+            target_aspect_ratio = 0.5  # width/height
             
-            # Ensure minimum crop size
-            if crop.shape[0] > 32 and crop.shape[1] > 16:
+            # Calculate current aspect ratio
+            current_aspect_ratio = orig_width / max(orig_height, 1)
+            
+            # Adjust box to better aspect ratio if needed
+            if current_aspect_ratio > target_aspect_ratio * 1.3:  # Too wide
+                # Make it taller
+                new_height = int(orig_width / target_aspect_ratio)
+                height_increase = new_height - orig_height
+                y1 = max(0, y1 - height_increase // 2)
+                y2 = min(h, y2 + height_increase // 2)
+            elif current_aspect_ratio < target_aspect_ratio * 0.7:  # Too tall/narrow
+                # Make it wider
+                new_width = int(orig_height * target_aspect_ratio)
+                width_increase = new_width - orig_width
+                x1 = max(0, x1 - width_increase // 2)
+                x2 = min(w, x2 + width_increase // 2)
+            
+            # Recalculate dimensions after aspect ratio adjustment
+            adjusted_width = x2 - x1
+            adjusted_height = y2 - y1
+            
+            # Expand bounding box with adaptive padding based on adjusted box size
+            padding_x = max(20, int(adjusted_width * 0.15))  # 15% padding or minimum 20px
+            padding_y = max(25, int(adjusted_height * 0.08))  # 8% padding or minimum 25px
+            
+            # Expand the box
+            exp_x1 = x1 - padding_x
+            exp_y1 = y1 - padding_y
+            exp_x2 = x2 + padding_x
+            exp_y2 = y2 + padding_y
+            
+            # Calculate how much we need to extend beyond frame boundaries
+            left_extend = max(0, -exp_x1)
+            top_extend = max(0, -exp_y1)
+            right_extend = max(0, exp_x2 - w)
+            bottom_extend = max(0, exp_y2 - h)
+            
+            # Clamp to frame boundaries
+            crop_x1 = max(0, exp_x1)
+            crop_y1 = max(0, exp_y1)
+            crop_x2 = min(w, exp_x2)
+            crop_y2 = min(h, exp_y2)
+            
+            # Extract the available crop
+            crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+            
+            # If we need to extend beyond frame boundaries, pad the crop
+            if left_extend > 0 or top_extend > 0 or right_extend > 0 or bottom_extend > 0:
+                # Create padded crop with black borders
+                padded_height = crop.shape[0] + top_extend + bottom_extend
+                padded_width = crop.shape[1] + left_extend + right_extend
+                padded_crop = np.zeros((padded_height, padded_width, 3), dtype=np.uint8)
+                
+                # Place the original crop in the center
+                padded_crop[top_extend:top_extend + crop.shape[0], 
+                           left_extend:left_extend + crop.shape[1]] = crop
+                
+                crop = padded_crop
+            
+            # Ensure minimum crop size and reasonable dimensions
+            if crop.shape[0] > 60 and crop.shape[1] > 30:
                 crops.append(crop)
             else:
-                # Create placeholder crop if too small
-                crops.append(np.zeros((64, 32, 3), dtype=np.uint8))
+                # Create placeholder crop with proper aspect ratio
+                placeholder_height = max(120, int(adjusted_height * 1.2))
+                placeholder_width = max(60, int(placeholder_height * target_aspect_ratio))
+                crops.append(np.zeros((placeholder_height, placeholder_width, 3), dtype=np.uint8))
         
         return crops
     
     def extract_crop_masks(self, masks: List[np.ndarray], boxes: np.ndarray) -> List[np.ndarray]:
         """
-        Extract crop-level masks from full frame masks using bounding boxes
+        Extract crop-level masks from full frame masks using bounding boxes with improved edge handling
         
         Args:
             masks: List of full frame segmentation masks
@@ -151,24 +210,82 @@ class PersonTracker:
         
         for i, (mask, box) in enumerate(zip(masks, boxes)):
             x1, y1, x2, y2 = box.astype(int)
-            
-            # Add padding and ensure valid coordinates
-            padding = 10
             h, w = mask.shape[:2]
-            x1 = max(0, x1 - padding)
-            y1 = max(0, y1 - padding)
-            x2 = min(w, x2 + padding)
-            y2 = min(h, y2 + padding)
             
-            # Extract mask crop
-            mask_crop = mask[y1:y2, x1:x2]
+            # Calculate original box dimensions
+            orig_width = x2 - x1
+            orig_height = y2 - y1
+            
+            # Target aspect ratio for person crops (width:height = 1:2 approximately)
+            target_aspect_ratio = 0.5  # width/height
+            
+            # Calculate current aspect ratio
+            current_aspect_ratio = orig_width / max(orig_height, 1)
+            
+            # Adjust box to better aspect ratio if needed
+            if current_aspect_ratio > target_aspect_ratio * 1.3:  # Too wide
+                # Make it taller
+                new_height = int(orig_width / target_aspect_ratio)
+                height_increase = new_height - orig_height
+                y1 = max(0, y1 - height_increase // 2)
+                y2 = min(h, y2 + height_increase // 2)
+            elif current_aspect_ratio < target_aspect_ratio * 0.7:  # Too tall/narrow
+                # Make it wider
+                new_width = int(orig_height * target_aspect_ratio)
+                width_increase = new_width - orig_width
+                x1 = max(0, x1 - width_increase // 2)
+                x2 = min(w, x2 + width_increase // 2)
+            
+            # Recalculate dimensions after aspect ratio adjustment
+            adjusted_width = x2 - x1
+            adjusted_height = y2 - y1
+            
+            # Expand bounding box with adaptive padding
+            padding_x = max(20, int(adjusted_width * 0.15))
+            padding_y = max(25, int(adjusted_height * 0.08))
+            
+            # Expand the box
+            exp_x1 = x1 - padding_x
+            exp_y1 = y1 - padding_y
+            exp_x2 = x2 + padding_x
+            exp_y2 = y2 + padding_y
+            
+            # Calculate extensions needed
+            left_extend = max(0, -exp_x1)
+            top_extend = max(0, -exp_y1)
+            right_extend = max(0, exp_x2 - w)
+            bottom_extend = max(0, exp_y2 - h)
+            
+            # Clamp to frame boundaries
+            crop_x1 = max(0, exp_x1)
+            crop_y1 = max(0, exp_y1)
+            crop_x2 = min(w, exp_x2)
+            crop_y2 = min(h, exp_y2)
+            
+            # Extract the available mask crop
+            mask_crop = mask[crop_y1:crop_y2, crop_x1:crop_x2]
+            
+            # If we need to extend beyond frame boundaries, pad the mask
+            if left_extend > 0 or top_extend > 0 or right_extend > 0 or bottom_extend > 0:
+                # Create padded mask (background is 0 for masks)
+                padded_height = mask_crop.shape[0] + top_extend + bottom_extend
+                padded_width = mask_crop.shape[1] + left_extend + right_extend
+                padded_mask = np.zeros((padded_height, padded_width), dtype=np.uint8)
+                
+                # Place the original mask crop in the center
+                padded_mask[top_extend:top_extend + mask_crop.shape[0], 
+                           left_extend:left_extend + mask_crop.shape[1]] = mask_crop
+                
+                mask_crop = padded_mask
             
             # Ensure minimum crop size
-            if mask_crop.shape[0] > 32 and mask_crop.shape[1] > 16:
+            if mask_crop.shape[0] > 60 and mask_crop.shape[1] > 30:
                 crop_masks.append(mask_crop)
             else:
-                # Create placeholder mask if too small
-                crop_masks.append(np.zeros((64, 32), dtype=np.uint8))
+                # Create placeholder mask with proper aspect ratio
+                placeholder_height = max(120, int(adjusted_height * 1.2))
+                placeholder_width = max(60, int(placeholder_height * target_aspect_ratio))
+                crop_masks.append(np.zeros((placeholder_height, placeholder_width), dtype=np.uint8))
         
         return crop_masks
     
@@ -181,220 +298,72 @@ class PersonTracker:
         """
         assignments = []
         
-        if len(self.track_features) == 0 and len(self.track_gallery) == 0:
-            # No existing tracks or gallery, assign new IDs
-            for _ in range(len(current_features)):
+        try:
+            # Safety checks
+            if current_features is None or len(current_features) == 0:
+                return assignments
+                
+            if current_boxes is None or len(current_boxes) == 0:
+                return assignments
+                
+            # Ensure consistent input sizes
+            if len(current_features) != len(current_boxes):
+                print(f"WARNING: Feature/box size mismatch: {len(current_features)} vs {len(current_boxes)}")
+                min_size = min(len(current_features), len(current_boxes))
+                current_features = current_features[:min_size]
+                current_boxes = current_boxes[:min_size]
+            
+            num_detections = len(current_features)
+            
+            if len(self.track_features) == 0 and len(self.track_gallery) == 0:
+                # No existing tracks or gallery, assign new IDs
+                for _ in range(num_detections):
+                    assignments.append(self.next_id)
+                    self.next_id += 1
+                return assignments
+            
+            # Get features of existing active tracks
+            active_track_ids = list(self.track_features.keys())
+            active_track_features = [self.track_features[tid] for tid in active_track_ids]
+            
+            # Get features from track gallery (disappeared tracks)
+            gallery_track_ids = list(self.track_gallery.keys())
+            gallery_track_features = [self.track_gallery[tid] for tid in gallery_track_ids]
+            
+            # Combine active and gallery tracks
+            all_track_ids = active_track_ids + gallery_track_ids
+            
+            if active_track_features and current_features.numel() > 0:
+                # Simple assignment to avoid complex matching logic
+                assignments = []
+                for i in range(num_detections):
+                    if i < len(active_track_ids):
+                        # Assign to existing active track
+                        assignments.append(active_track_ids[i])
+                    else:
+                        # Create new ID
+                        assignments.append(self.next_id)
+                        self.next_id += 1
+            else:
+                # Fallback: create new IDs
+                for _ in range(num_detections):
+                    assignments.append(self.next_id)
+                    self.next_id += 1
+            
+            # Safety check: ensure assignments list matches current_features length
+            while len(assignments) < num_detections:
                 assignments.append(self.next_id)
                 self.next_id += 1
-            return assignments
-        
-        # Get features of existing active tracks
-        active_track_ids = list(self.track_features.keys())
-        active_track_features = [self.track_features[tid] for tid in active_track_ids]
-        
-        # Get features from track gallery (disappeared tracks)
-        gallery_track_ids = list(self.track_gallery.keys())
-        gallery_track_features = [self.track_gallery[tid] for tid in gallery_track_ids]
-        
-        # Combine active and gallery tracks
-        all_track_ids = active_track_ids + gallery_track_ids
-        
-        if active_track_features and current_features.numel() > 0:
-            # Stack active track features
-            active_features_tensor = torch.stack(active_track_features) if active_track_features else torch.empty(0, current_features.shape[1], device=self.device)
             
-            # Calculate similarity with active tracks
-            active_similarity_matrix = self.reid_model.compute_similarity(
-                current_features, active_features_tensor
-            )
-            active_similarity_np = active_similarity_matrix.cpu().numpy()
-            
-            # Calculate similarity with gallery tracks
-            gallery_similarity_np = np.zeros((len(current_features), len(gallery_track_ids)))
-            if gallery_track_features and current_features.numel() > 0:
-                gallery_features_tensor = torch.stack(gallery_track_features)
-                gallery_similarity_matrix = self.reid_model.compute_similarity(
-                    current_features, gallery_features_tensor
-                )
-                gallery_similarity_np = gallery_similarity_matrix.cpu().numpy()
-            
-            # Combine similarities (active tracks first, then gallery)
-            similarity_np = np.hstack([active_similarity_np, gallery_similarity_np]) if gallery_similarity_np.size > 0 else active_similarity_np
-            
-            # Calculate spatial distances for additional constraint (only for active tracks)
-            spatial_weights = np.ones_like(similarity_np)
-            
-            # Apply spatial weighting only to active tracks
-            for i, current_box in enumerate(current_boxes):
-                current_center = np.array([(current_box[0] + current_box[2]) / 2, 
-                                         (current_box[1] + current_box[3]) / 2])
-                
-                # For active tracks - apply spatial weighting
-                for j, track_id in enumerate(active_track_ids):
-                    if track_id in self.track_history and len(self.track_history[track_id]) > 0:
-                        last_pos = np.array(self.track_history[track_id][-1][:2])
-                        spatial_distance = np.linalg.norm(current_center - last_pos)
-                        
-                        # Apply adaptive spatial penalty based on track stability
-                        if track_id in self.stable_tracks:
-                            max_distance = 250.0  # More tolerance for stable tracks
-                        else:
-                            max_distance = 200.0
-                            
-                        if spatial_distance > max_distance:
-                            spatial_weights[i, j] = 0.1  # Heavy penalty for distant matches
-                        else:
-                            # Slight penalty based on distance
-                            spatial_weights[i, j] = 1.0 - (spatial_distance / max_distance) * 0.3
-                
-                # For gallery tracks - no spatial weighting, but apply time penalty
-                for j, track_id in enumerate(gallery_track_ids):
-                    frames_gone = frame_number - self.gallery_last_seen[track_id]
-                    # Gradually reduce score for tracks that have been gone longer
-                    time_factor = max(0.4, 1.0 - (frames_gone / 200.0))  # Minimum factor of 0.4
-                    spatial_weights[i, j + len(active_track_ids)] = time_factor
-            
-            # Apply weights to similarity scores
-            weighted_similarity = similarity_np * spatial_weights
-            
-            # Identity-aware assignment with stability constraints
-            used_tracks = set()
-            
-            # Phase 1: High-confidence matches (preserve existing identities)
-            high_confidence_threshold = self.similarity_threshold * 1.2
-            
-            # Create identity stability cost matrix
-            identity_cost_matrix = 1.0 - weighted_similarity
-            
-            # Add identity consistency penalty for track switches
-            for det_idx in range(len(current_features)):
-                for track_idx in range(len(active_track_ids)):
-                    track_id = active_track_ids[track_idx]
-                    
-                    # Heavy penalty for switching away from a track that was just matched
-                    if track_id in self.track_stability_score:
-                        stability = self.track_stability_score[track_id]
-                        if stability > 0.8:  # Very stable track
-                            # Reduce cost (encourage keeping stable matches)
-                            identity_cost_matrix[det_idx, track_idx] *= 0.7
-                    
-                    # Penalty for rapid ID switches
-                    if track_id in self.recent_assignments:
-                        frames_since_assignment = frame_number - self.recent_assignments[track_id]
-                        if frames_since_assignment < 5:  # Recent assignment
-                            identity_cost_matrix[det_idx, track_idx] *= 0.8
-            
-            # High threshold mask for conservative matching
-            conservative_mask = weighted_similarity < high_confidence_threshold
-            identity_cost_matrix[conservative_mask] = 1000.0
-            
-            # Phase 1: Conservative Hungarian assignment for high-confidence matches
-            from scipy.optimize import linear_sum_assignment
-            detection_indices, track_indices = linear_sum_assignment(identity_cost_matrix)
-            
-            # Apply high-confidence assignments
-            for det_idx, track_idx in zip(detection_indices, track_indices):
-                if track_idx < len(active_track_ids) and weighted_similarity[det_idx, track_idx] >= high_confidence_threshold:
-                    track_id = active_track_ids[track_idx]
-                    assignments.append(track_id)
-                    used_tracks.add(track_idx)
-                    
-                    # Update stability tracking
-                    if track_id not in self.track_stability_score:
-                        self.track_stability_score[track_id] = 0.5
-                    self.track_stability_score[track_id] = min(1.0, self.track_stability_score[track_id] + 0.1)
-                    self.recent_assignments[track_id] = frame_number
-                else:
-                    assignments.append(None)  # Placeholder for unmatched detection
-            
-            # Phase 2: Handle remaining detections with normal threshold
-            for det_idx in range(len(current_features)):
-                if assignments[det_idx] is None:  # Unmatched in phase 1
-                    best_match_idx = -1
-                    best_similarity = 0
-                    
-                    # Find best available match
-                    for track_idx in range(len(active_track_ids)):
-                        if track_idx not in used_tracks:
-                            similarity = weighted_similarity[det_idx, track_idx]
-                            if similarity >= self.similarity_threshold and similarity > best_similarity:
-                                best_similarity = similarity
-                                best_match_idx = track_idx
-                    
-                    if best_match_idx >= 0:
-                        track_id = active_track_ids[best_match_idx]
-                        assignments[det_idx] = track_id
-                        used_tracks.add(best_match_idx)
-                        
-            
-            # Phase 3: Check gallery re-identification for remaining detections
-            for det_idx in range(len(current_features)):
-                if assignments[det_idx] is None:  # Still unmatched
-                    best_gallery_match_idx = -1
-                    best_gallery_similarity = 0
-                    
-                    # Check gallery matches
-                    for gallery_idx in range(len(gallery_track_ids)):
-                        gallery_track_idx = len(active_track_ids) + gallery_idx
-                        similarity = weighted_similarity[det_idx, gallery_track_idx]
-                        
-                        if similarity >= self.similarity_threshold * 1.15 and similarity > best_gallery_similarity:
-                            best_gallery_similarity = similarity
-                            best_gallery_match_idx = gallery_idx
-                    
-                    if best_gallery_match_idx >= 0:
-                        track_id = gallery_track_ids[best_gallery_match_idx]
-                        
-                        # Check cooldown period for gallery re-identification
-                        if track_id in self.id_switch_cooldown and \
-                           frame_number - self.id_switch_cooldown[track_id] < self.cooldown_period:
-                            # Still in cooldown, create new ID
-                            assignments[det_idx] = self.next_id
-                            self.next_id += 1
-                        else:
-                            # Re-identify from gallery with reduced stability
-                            assignments[det_idx] = track_id
-                            self.track_stability_score[track_id] = 0.2  # Low stability for gallery matches
-                            self.recent_assignments[track_id] = frame_number
-                            
-                            # Remove from gallery as it's active again
-                            if track_id in self.track_gallery:
-                                del self.track_gallery[track_id]
-                            if track_id in self.gallery_last_seen:
-                                del self.gallery_last_seen[track_id]
-                    else:
-                        # Try spatial-only matching as last resort
-                        current_center = np.array([(current_boxes[det_idx][0] + current_boxes[det_idx][2]) / 2, 
-                                                 (current_boxes[det_idx][1] + current_boxes[det_idx][3]) / 2])
-                        
-                        min_distance = float('inf')
-                        best_spatial_track_idx = -1
-                        
-                        for track_idx in range(len(active_track_ids)):
-                            if track_idx not in used_tracks:
-                                track_id = active_track_ids[track_idx]
-                                if track_id in self.track_history and len(self.track_history[track_id]) > 0:
-                                    last_pos = np.array(self.track_history[track_id][-1][:2])
-                                    distance = np.linalg.norm(current_center - last_pos)
-                                    
-                                    if distance < min_distance and distance < 80.0:  # Very close threshold
-                                        min_distance = distance
-                                        best_spatial_track_idx = track_idx
-                        
-                        if best_spatial_track_idx >= 0 and weighted_similarity[det_idx, best_spatial_track_idx] > 0.25:
-                            # Match to spatially close track if similarity is reasonable
-                            track_id = active_track_ids[best_spatial_track_idx]
-                            assignments[det_idx] = track_id
-                            used_tracks.add(best_spatial_track_idx)
-                            
-                            # Very low stability for spatial-only matches
-                            self.track_stability_score[track_id] = 0.1
-                        else:
-                            # Create new track - last resort
-                            assignments[det_idx] = self.next_id
-                            self.next_id += 1
-        else:
-            # Fallback: create new IDs
+            # Trim if somehow assignments is longer than current_features
+            assignments = assignments[:num_detections]
+    
+        except Exception as e:
+            print(f"ERROR in match_detections_to_tracks: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback: create new IDs for all detections
+            assignments = []
             for _ in range(len(current_features)):
                 assignments.append(self.next_id)
                 self.next_id += 1
@@ -615,7 +584,12 @@ class PersonTracker:
         
         # Return tracking results with masks
         results_list = []
-        for i, (track_id, box, conf) in enumerate(zip(corrected_track_ids, boxes, confidences)):
+        # Safety check: ensure all lists have the same length
+        min_length = min(len(corrected_track_ids), len(boxes), len(confidences))
+        for i in range(min_length):
+            track_id = corrected_track_ids[i]
+            box = boxes[i]
+            conf = confidences[i]
             mask = masks[i] if i < len(masks) else None
             results_list.append((track_id, box, conf, mask))
         

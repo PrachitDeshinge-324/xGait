@@ -286,8 +286,9 @@ class EmbeddingVisualizer:
                     # Add track ID labels
                     if show_labels and len(track_points) > 0:
                         center = np.mean(track_points, axis=0)
-                        ax.annotate(f'T{track_id}', center, fontsize=8, ha='center',
-                                  bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.7))
+                        if len(center) >= 2:  # Ensure center has at least 2 dimensions
+                            ax.annotate(f'T{track_id}', (center[0], center[1]), fontsize=8, ha='center',
+                                      bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.7))
             
             ax.set_xlabel(f'{method.upper()} Component 1')
             ax.set_ylabel(f'{method.upper()} Component 2')

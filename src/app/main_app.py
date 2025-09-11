@@ -165,7 +165,7 @@ class PersonTrackingApp:
                   mininterval=0.01, maxinterval=0.1, file=sys.stdout, 
                   ascii=False, colour='green') as pbar:
             
-            while cap.isOpened() and frame_count < 80:
+            while cap.isOpened() and frame_count < pbar_total:
                 # Only pause if display window is enabled and user pressed space
                 should_pause = paused and self.config.video.display_window
                 

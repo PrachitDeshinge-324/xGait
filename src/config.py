@@ -72,7 +72,7 @@ WEIGHTS_DIR = "../Weights"
 @dataclass
 class ModelConfig:
     """Model configuration settings"""
-    yolo_model_path: str = os.path.join(WEIGHTS_DIR, "../v_2/Trained models/yolo11s_cihp_optimized/weights/best.pt")  # Use segmentation model
+    yolo_model_path: str = os.path.join(WEIGHTS_DIR, "yolo11s-seg.pt")  # Use segmentation model
     transreid_model_path: str = os.path.join(WEIGHTS_DIR, "transreid.pth")
     xgait_model_path: str = os.path.join(WEIGHTS_DIR, "Gait3D-XGait-120000.pt")
     parsing_model_path: str = os.path.join(WEIGHTS_DIR, "human_parsing.pth")
@@ -109,7 +109,7 @@ class ModelConfig:
 class TrackerConfig:
     """Tracker configuration settings"""
     # Detection parameters
-    confidence_threshold: float = 0.5
+    confidence_threshold: float = 0.4
     iou_threshold: float = 0.6
     
     # ReID parameters - Further optimized to reduce ID fragmentation
@@ -192,9 +192,9 @@ class IdentityConfig:
     max_track_history_length: int = 500  # reduced from 1000 for memory efficiency
     
     # Real-time performance optimizations - balanced mode
-    enable_debug_outputs: bool = False  # Disable debug image saving
-    enable_visualization_queue: bool = False  # Disable visualization queue
-    parsing_skip_interval: int = 3  # Process parsing every 3rd frame (balanced performance vs feature quality)
+    enable_debug_outputs: bool = True  # Disable debug image saving
+    enable_visualization_queue: bool = True  # Disable visualization queue
+    parsing_skip_interval: int = 1  # Process parsing every 1st frame (balanced performance vs feature quality)
 
 @dataclass
 class SystemConfig:
@@ -207,7 +207,7 @@ class SystemConfig:
 
     # System settings
     verbose: bool = True
-    debug_mode: bool = False
+    debug_mode: bool = True
     
     @classmethod
     def load_default(cls) -> 'SystemConfig':
