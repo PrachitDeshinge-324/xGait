@@ -603,7 +603,7 @@ class FAISSPersonGallery:
                     emb.embedding,
                     emb.person_name,
                     emb.track_id,
-                    "faiss_gallery_embedding"
+                    "gallery_embedding"
                 ))
         
         return all_embeddings

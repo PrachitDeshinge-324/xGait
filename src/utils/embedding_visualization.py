@@ -34,7 +34,7 @@ import json
 
 # Optional imports with fallbacks
 try:
-    import umap
+    import umap.umap_ as umap
     UMAP_AVAILABLE = True
 except ImportError:
     UMAP_AVAILABLE = False

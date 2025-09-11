@@ -366,6 +366,16 @@ class IdentityManager:
         }
         return stats
     
+    def get_gallery_summary(self) -> Dict:
+        """Get gallery summary for visualization"""
+        faiss_stats = self.faiss_gallery.get_gallery_statistics()
+        return {
+            'num_identities': faiss_stats['total_persons'],
+            'total_tracks': len(self.track_identities),
+            'persons': faiss_stats['persons'],
+            'total_embeddings': faiss_stats['total_embeddings']
+        }
+    
     def get_is_new_identity_dict(self) -> Dict:
         """Get dictionary of new identities"""
         new_identities = {}
