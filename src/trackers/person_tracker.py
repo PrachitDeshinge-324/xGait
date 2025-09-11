@@ -334,14 +334,49 @@ class PersonTracker:
             all_track_ids = active_track_ids + gallery_track_ids
             
             if active_track_features and current_features.numel() > 0:
-                # Simple assignment to avoid complex matching logic
+                # Proper feature-based assignment using similarity matching
                 assignments = []
+                used_track_ids = set()
+                
+                # Calculate similarity matrix between current detections and active tracks
+                active_features_tensor = torch.stack(active_track_features)
+                similarity_matrix = self.reid_model.compute_similarity(current_features, active_features_tensor)
+                
+                # For each detection, find the best matching track
                 for i in range(num_detections):
-                    if i < len(active_track_ids):
-                        # Assign to existing active track
-                        assignments.append(active_track_ids[i])
+                    best_track_id = None
+                    best_similarity = 0.0
+                    
+                    # Check similarity with all active tracks
+                    for j, track_id in enumerate(active_track_ids):
+                        if track_id in used_track_ids:
+                            continue  # Track already assigned
+                            
+                        similarity = similarity_matrix[i, j].item()
+                        
+                        # Add spatial proximity check to improve matching
+                        if len(current_boxes) > i and track_id in self.track_history and len(self.track_history[track_id]) > 0:
+                            curr_center = np.array([(current_boxes[i][0] + current_boxes[i][2]) / 2, 
+                                                  (current_boxes[i][1] + current_boxes[i][3]) / 2])
+                            last_pos = np.array(self.track_history[track_id][-1][:2])
+                            spatial_distance = np.linalg.norm(curr_center - last_pos)
+                            
+                            # Boost similarity if spatially close, penalize if far
+                            if spatial_distance < self.spatial_distance_threshold:
+                                spatial_weight = max(0.1, 1.0 - (spatial_distance / self.spatial_distance_threshold))
+                                similarity = similarity * 0.7 + spatial_weight * 0.3
+                            else:
+                                similarity *= 0.5  # Penalize distant matches
+                        
+                        if similarity > best_similarity and similarity > self.similarity_threshold:
+                            best_similarity = similarity
+                            best_track_id = track_id
+                    
+                    if best_track_id is not None:
+                        assignments.append(best_track_id)
+                        used_track_ids.add(best_track_id)
                     else:
-                        # Create new ID
+                        # No good match found, create new ID
                         assignments.append(self.next_id)
                         self.next_id += 1
             else:

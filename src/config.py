@@ -76,7 +76,7 @@ class ModelConfig:
     transreid_model_path: str = os.path.join(WEIGHTS_DIR, "transreid.pth")
     xgait_model_path: str = os.path.join(WEIGHTS_DIR, "Gait3D-XGait-120000.pt")
     parsing_model_path: str = os.path.join(WEIGHTS_DIR, "human_parsing.pth")
-    silhouette_model_path: str = os.path.join(WEIGHTS_DIR, "u2net.pth")  # Keep for backward compatibility
+    # Note: silhouette_model_path removed - now using YOLO segmentation for silhouettes
     device: str = get_global_device()
     
     # Model-specific device overrides for compatibility
@@ -192,9 +192,9 @@ class IdentityConfig:
     max_track_history_length: int = 500  # reduced from 1000 for memory efficiency
     
     # Real-time performance optimizations - balanced mode
-    enable_debug_outputs: bool = True  # Disable debug image saving
-    enable_visualization_queue: bool = True  # Disable visualization queue
-    parsing_skip_interval: int = 1  # Process parsing every 1st frame (balanced performance vs feature quality)
+    enable_debug_outputs: bool = False  # Disabled by default for performance
+    enable_visualization_queue: bool = False  # Disabled for performance
+    parsing_skip_interval: int = 2  # Process parsing every 2nd frame for better performance
 
 @dataclass
 class SystemConfig:

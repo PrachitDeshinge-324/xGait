@@ -8,11 +8,9 @@ import cv2
 import numpy as np
 import time
 import queue
-import threading
 from collections import defaultdict, deque
 from typing import List, Tuple, Dict, Optional
 from pathlib import Path
-# Removed ThreadPoolExecutor import - PERF-003 fix: No threading for GPU operations
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for thread safety
 import matplotlib.pyplot as plt
@@ -22,7 +20,6 @@ from sklearn.metrics.pairwise import cosine_similarity
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from src.config import xgaitConfig
-from src.models.yolo_silhouette_model import YOLOSilhouetteExtractor
 from src.models.parsing_model import HumanParsingModel
 from src.models.xgait_model import create_xgait_inference
 
@@ -34,12 +31,8 @@ class GaitProcessor:
         self.config = config
         self.identity_manager = identity_manager
         
-        # Initialize models - Remove YOLO silhouette extractor since we get masks from tracker
-        # self.silhouette_extractor = YOLOSilhouetteExtractor(
-        #     device=config.model.device,
-        #     model_path=config.model.yolo_seg_model_path if hasattr(config.model, 'yolo_seg_model_path') else "yolo11n-seg.pt"
-        # )
-        self.silhouette_extractor = None  # Will use masks directly from tracker
+        # Initialize models - YOLO masks come directly from tracker
+        self.silhouette_extractor = None  # Using YOLO segmentation masks from tracker
         self.parsing_model = HumanParsingModel(
             model_path=config.model.parsing_model_path, 
             device=config.model.device
@@ -198,8 +191,10 @@ class GaitProcessor:
         # No longer need to collect from queue since we process directly
         pass
         
-        # Debug visualizations disabled for maximum performance
-        if frame_count % 10 == 0:
+        # Debug visualizations - only when explicitly enabled and much less frequent
+        if (self.enable_debug_outputs and 
+            frame_count % 50 == 0 and  # Every 50 frames instead of 10
+            len(tracking_results) > 0):  # Only when there are actual tracks
             # Convert back to 3-tuple format for visualization compatibility
             vis_results = [(r[0], r[1], r[2]) for r in tracking_results]
             self._save_debug_visualization(frame, vis_results, frame_count)
@@ -705,13 +700,9 @@ class GaitProcessor:
     
     def finalize_processing(self, frame_count: int) -> None:
         """Finalize processing and cleanup"""
-        # No longer using executor, just ensure any remaining processing is complete
-        pass
-    
-    def cleanup(self) -> None:
-        """Clean up resources"""
-        # No executor to clean up anymore
-        pass
+        # Processing is now synchronous, no cleanup needed
+        if self.config.verbose:
+            print(f"🏁 Processing completed at frame {frame_count}")
     
     def get_statistics(self) -> Dict:
         """Get comprehensive gait parsing statistics including quality metrics"""
@@ -749,162 +740,113 @@ class GaitProcessor:
         return base_stats
     
     def _save_debug_visualization(self, frame: np.ndarray, tracking_results: List[Tuple[int, any, float]], frame_count: int) -> None:
-        """Save comprehensive debug visualization"""
+        """Save debug visualization with silhouettes and parsing to verify pipeline correctness"""
         try:
-            # Create comprehensive visualization
-            max_tracks_to_show = min(len(tracking_results), 4)
+            max_tracks_to_show = min(len(tracking_results), 3)
             if max_tracks_to_show == 0:
                 return
             
-            fig, axes = plt.subplots(5, max_tracks_to_show, figsize=(max_tracks_to_show * 4, 20))
-            # Ensure axes is always 2D
+            # Create 4-row visualization: Crop, Silhouette, Parsing, Status
+            fig, axes = plt.subplots(4, max_tracks_to_show, figsize=(max_tracks_to_show * 3, 12))
             if max_tracks_to_show == 1:
-                # For single track, reshape to (5, 1)
-                axes = axes.reshape(5, 1)
+                axes = axes.reshape(4, 1)
             elif axes.ndim == 1:
-                # For other cases where axes might be 1D
                 axes = axes.reshape(-1, 1)
             
-            fig.suptitle(f'Frame {frame_count} - Complete GaitParsing Pipeline Results', 
-                        fontsize=16, fontweight='bold')
-            
-            # Row labels
-            row_labels = ['Person Crop', 'Silhouette', 'Parsing Mask', 'XGait Features', 'Cosine Similarity']
+            fig.suptitle(f'Frame {frame_count} - Silhouette & Parsing Debug', fontsize=14)
             
             for idx, (track_id, box, conf) in enumerate(tracking_results[:max_tracks_to_show]):
                 col_idx = idx
-                
-                # Get crop
                 x1, y1, x2, y2 = box.astype(int)
-                padding = 15
+                
+                # Ensure coordinates are within frame bounds
                 h, w = frame.shape[:2]
-                x1 = max(0, x1 - padding)
-                y1 = max(0, y1 - padding)
-                x2 = min(w, x2 + padding)
-                y2 = min(h, y2 + padding)
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(w, x2), min(h, y2)
+                
                 crop = frame[y1:y2, x1:x2]
                 
                 if crop.size > 0:
-                    crop_resized = cv2.resize(crop, (128, 256))
+                    crop_resized = cv2.resize(crop, (96, 192))
                     
-                    # Row 1: Original crop
+                    # Row 1: Person crop
                     ax = axes[0, col_idx]
                     ax.imshow(cv2.cvtColor(crop_resized, cv2.COLOR_BGR2RGB))
-                    ax.set_title(f'Track {track_id}\\nConf: {conf:.2f}', fontsize=10)
+                    ax.set_title(f'Track {track_id} - Crop', fontsize=10)
                     ax.axis('off')
-                    if col_idx == 0:
-                        ax.text(-0.1, 0.5, row_labels[0], rotation=90, va='center', ha='right', 
-                               transform=ax.transAxes, fontsize=12, fontweight='bold')
                     
-                    # Row 2: Silhouette
+                    # Row 2: Silhouette (from YOLO segmentation mask)
                     ax = axes[1, col_idx]
                     if track_id in self.track_silhouettes and len(self.track_silhouettes[track_id]) > 0:
                         latest_silhouette = self.track_silhouettes[track_id][-1]
                         ax.imshow(latest_silhouette, cmap='gray')
-                        ax.set_title(f'Silhouette\\n{len(self.track_silhouettes[track_id])} total', fontsize=10)
+                        ax.set_title(f'Silhouette ({len(self.track_silhouettes[track_id])} total)', fontsize=10)
                     else:
-                        ax.text(0.5, 0.5, 'Processing...', ha='center', va='center', transform=ax.transAxes)
-                        ax.set_title('No Silhouette Yet', fontsize=10)
+                        ax.text(0.5, 0.5, 'No Silhouette\nYet', ha='center', va='center', transform=ax.transAxes)
+                        ax.set_title('Silhouette Processing...', fontsize=10)
                     ax.axis('off')
-                    if col_idx == 0:
-                        ax.text(-0.1, 0.5, row_labels[1], rotation=90, va='center', ha='right', 
-                               transform=ax.transAxes, fontsize=12, fontweight='bold')
                     
-                    # Row 3: Parsing mask
+                    # Row 3: Human Parsing
                     ax = axes[2, col_idx]
                     if track_id in self.track_parsing_results and len(self.track_parsing_results[track_id]) > 0:
                         latest_result = self.track_parsing_results[track_id][-1]
-                        parsing_mask = latest_result.get('parsing_mask', np.zeros((256, 128), dtype=np.uint8))
+                        parsing_mask = latest_result.get('parsing_mask', np.zeros((192, 96), dtype=np.uint8))
                         
-                        # Create color map for parsing
-                        gait_parsing_colors = np.array([
-                            [0, 0, 0],       # background
-                            [255, 0, 0],     # head
-                            [255, 255, 0],   # body
-                            [0, 0, 255],     # right arm
-                            [255, 0, 255],   # left arm
-                            [0, 255, 0],     # right leg
-                            [0, 255, 255]    # left leg
+                        # Create color map for parsing visualization
+                        parsing_colors = np.array([
+                            [0, 0, 0],       # background - black
+                            [255, 0, 0],     # head - red
+                            [0, 255, 0],     # torso - green  
+                            [0, 0, 255],     # right arm - blue
+                            [255, 255, 0],   # left arm - yellow
+                            [255, 0, 255],   # right leg - magenta
+                            [0, 255, 255]    # left leg - cyan
                         ]) / 255.0
                         
-                        # Convert to RGB
+                        # Convert parsing mask to RGB
                         parsing_rgb = np.zeros((parsing_mask.shape[0], parsing_mask.shape[1], 3))
-                        for i in range(min(7, len(gait_parsing_colors))):
+                        for i in range(min(7, len(parsing_colors))):
                             mask = parsing_mask == i
                             if np.any(mask):
-                                parsing_rgb[mask] = gait_parsing_colors[i]
+                                parsing_rgb[mask] = parsing_colors[i]
                         
                         ax.imshow(parsing_rgb)
                         unique_parts = len(np.unique(parsing_mask))
-                        ax.set_title(f'Human Parsing\\n{unique_parts} parts', fontsize=10)
+                        ax.set_title(f'Parsing ({unique_parts} parts)', fontsize=10)
                     else:
-                        ax.text(0.5, 0.5, 'Processing...', ha='center', va='center', transform=ax.transAxes)
-                        ax.set_title('No Parsing Yet', fontsize=10)
+                        ax.text(0.5, 0.5, 'No Parsing\nYet', ha='center', va='center', transform=ax.transAxes)
+                        ax.set_title('Parsing Processing...', fontsize=10)
                     ax.axis('off')
-                    if col_idx == 0:
-                        ax.text(-0.1, 0.5, row_labels[2], rotation=90, va='center', ha='right', 
-                               transform=ax.transAxes, fontsize=12, fontweight='bold')
                     
-                    # Row 4: XGait features
+                    # Row 4: Status and metrics
                     ax = axes[3, col_idx]
-                    if track_id in self.track_gait_features and len(self.track_gait_features[track_id]) > 0:
-                        latest_features = self.track_gait_features[track_id][-1]
-                        if latest_features.size > 0 and np.any(latest_features != 0):
-                            # Reshape for visualization
-                            if latest_features.size == 256:
-                                feature_2d = latest_features.reshape(16, 16)
-                            else:
-                                feature_2d = np.zeros((16, 16))
-                                flat = latest_features.flatten()
-                                n = min(flat.size, 256)
-                                feature_2d.flat[:n] = flat[:n]
-                            
-                            vmin = np.percentile(feature_2d, 1)
-                            vmax = np.percentile(feature_2d, 99)
-                            im = ax.imshow(feature_2d, cmap='seismic', aspect='auto', vmin=vmin, vmax=vmax)
-                            ax.set_title(f'XGait Features\\n{latest_features.size}D vector', fontsize=10)
-                        else:
-                            ax.text(0.5, 0.5, 'Zero Features', ha='center', va='center', 
-                                   transform=ax.transAxes, color='red')
-                            ax.set_title('XGait: No Features', fontsize=10)
-                    else:
-                        ax.text(0.5, 0.5, 'Processing...', ha='center', va='center', transform=ax.transAxes)
-                        ax.set_title('No Features Yet', fontsize=10)
+                    sil_count = len(self.track_silhouettes.get(track_id, []))
+                    parse_count = len(self.track_parsing_results.get(track_id, []))
+                    gait_count = len(self.track_gait_features.get(track_id, []))
+                    
+                    status_text = f'ID: {track_id}\nConf: {conf:.2f}\nSil: {sil_count}\nParse: {parse_count}\nGait: {gait_count}'
+                    ax.text(0.5, 0.5, status_text, ha='center', va='center', 
+                           transform=ax.transAxes, fontsize=9, family='monospace')
+                    ax.set_title('Pipeline Status', fontsize=10)
                     ax.axis('off')
-                    if col_idx == 0:
-                        ax.text(-0.1, 0.5, row_labels[3], rotation=90, va='center', ha='right', 
-                               transform=ax.transAxes, fontsize=12, fontweight='bold')
+                else:
+                    # Handle empty crops
+                    for row in range(4):
+                        axes[row, col_idx].text(0.5, 0.5, 'No Crop', ha='center', va='center')
+                        axes[row, col_idx].set_title(['Crop', 'Silhouette', 'Parsing', 'Status'][row], fontsize=10)
+                        axes[row, col_idx].axis('off')
             
-            # Row 5: Cosine similarity matrix
-            frame_features = []
-            frame_track_ids = []
-            for t_id, _, _ in tracking_results[:max_tracks_to_show]:
-                feats = self.track_gait_features.get(t_id, [])
-                if feats:
-                    frame_features.append(feats[-1])
-                    frame_track_ids.append(t_id)
-
-            sim_ax = axes[4, 0]
-            # Skip similarity visualization for now as it needs refactoring for enhanced gallery
-            sim_ax.text(0.5, 0.5, 'Gallery Similarity\n(Enhanced Gallery\nintegration pending)', 
-                       ha='center', va='center', transform=sim_ax.transAxes, fontsize=10)
-            sim_ax.set_title('Track vs Gallery Cosine Similarity', fontsize=10)
-            
-            # Hide unused similarity plots
-            for col_idx in range(1, max_tracks_to_show):
-                axes[4, col_idx].axis('off')
-            
-            # Save visualization
-            output_path = self.debug_output_dir / f"frame_{frame_count:05d}_complete_pipeline.png"
-            plt.savefig(output_path, dpi=120, bbox_inches='tight', facecolor='white')
+            # Save debug visualization
+            output_path = self.debug_output_dir / f"frame_{frame_count:05d}_debug.png"
+            plt.savefig(output_path, dpi=80, bbox_inches='tight', facecolor='white')
             plt.close(fig)
             
             if self.config.verbose:
-                print(f"🎨 Saved complete pipeline visualization: {output_path}")
+                print(f"🎨 Saved silhouette & parsing debug: {output_path}")
                 
         except Exception as e:
             if self.config.verbose:
-                print(f"⚠️  Error saving visualization: {e}")
+                print(f"⚠️  Error saving debug visualization: {e}")
                 import traceback
                 traceback.print_exc()
     

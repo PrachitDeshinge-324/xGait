@@ -109,7 +109,16 @@ def configure_system(args):
     
     # Debug configuration
     config.verbose = args.debug
-    config.debug_mode = args.save_debug
+    config.debug_mode = args.debug  # Fixed: should use args.debug not args.save_debug
+    
+    # Enable debug outputs when debug flag is used
+    if args.debug:
+        config.identity.enable_debug_outputs = True
+        print("🐛 Debug mode enabled - debug visualizations will be saved")
+    
+    if args.save_debug:
+        config.identity.enable_debug_outputs = True
+        print("🎨 Debug visualizations enabled")
     
     # Device configuration
     if args.device != 'auto':

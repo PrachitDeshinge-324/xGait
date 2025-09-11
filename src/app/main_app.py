@@ -5,7 +5,6 @@ Main application class for person tracking with XGait feature extraction.
 
 import warnings
 import os
-import contextlib
 import sys
 import cv2
 import numpy as np
@@ -20,19 +19,7 @@ from collections import defaultdict
 from typing import List, Tuple, Dict, Optional
 from pathlib import Path
 from datetime import datetime
-# Removed ThreadPoolExecutor import - PERF-003 fix: No threading for GPU operations
 from tqdm import tqdm
-
-# Context manager to suppress stdout warnings
-@contextlib.contextmanager
-def suppress_stdout():
-    with open(os.devnull, "w") as devnull:
-        old_stdout = sys.stdout
-        sys.stdout = devnull
-        try:
-            yield
-        finally:
-            sys.stdout = old_stdout
 
 # Add parent directory to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -40,7 +27,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from src.config import SystemConfig, xgaitConfig
 from src.trackers.person_tracker import PersonTracker
 from src.utils.visualization import TrackingVisualizer, VideoWriter
-from src.models.silhouette_model import SilhouetteExtractor
 from src.models.parsing_model import HumanParsingModel
 from src.models.xgait_model import create_xgait_inference
 
