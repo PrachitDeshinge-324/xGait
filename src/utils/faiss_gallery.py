@@ -83,14 +83,144 @@ class FAISSPersonGallery:
         logger.info(f"   Embedding dimension: {embedding_dim}")
         logger.info(f"   Similarity threshold: {similarity_threshold}")
         logger.info(f"   Max embeddings per person: {max_embeddings_per_person}")
-    
+
     def _normalize_embedding(self, embedding: np.ndarray) -> np.ndarray:
         """Normalize embedding for cosine similarity"""
         norm = np.linalg.norm(embedding)
         if norm == 0:
             return embedding
         return embedding / norm
-    
+
+    def _calculate_cluster_density(self, person_name: str, new_embedding: np.ndarray = None) -> float:
+        """
+        Calculate cluster density for a person's embeddings
+        
+        Args:
+            person_name: Name of the person
+            new_embedding: Optional new embedding to include in calculation
+            
+        Returns:
+            Average intra-cluster similarity (density score)
+        """
+        if person_name not in self.name_to_indices:
+            return 0.0
+            
+        indices = self.name_to_indices[person_name]
+        valid_embeddings = []
+        
+        # Collect valid embeddings for this person
+        for idx in indices:
+            if idx < len(self.person_embeddings) and self.person_embeddings[idx] is not None:
+                valid_embeddings.append(self.person_embeddings[idx].embedding)
+        
+        # Include new embedding if provided
+        if new_embedding is not None:
+            valid_embeddings.append(new_embedding)
+        
+        if len(valid_embeddings) < 2:
+            return 1.0  # Single embedding has perfect density
+        
+        # Calculate pairwise similarities within the cluster
+        similarities = []
+        for i in range(len(valid_embeddings)):
+            for j in range(i + 1, len(valid_embeddings)):
+                # Cosine similarity
+                sim = np.dot(valid_embeddings[i], valid_embeddings[j])
+                similarities.append(sim)
+        
+        return np.mean(similarities) if similarities else 0.0
+
+    def _find_cluster_outlier(self, person_name: str) -> int:
+        """
+        Find the embedding that is most distant from the cluster center
+        
+        Args:
+            person_name: Name of the person
+            
+        Returns:
+            Index of the outlier embedding, or -1 if no outlier found
+        """
+        if person_name not in self.name_to_indices:
+            return -1
+            
+        indices = self.name_to_indices[person_name]
+        valid_embeddings = []
+        valid_indices = []
+        
+        # Collect valid embeddings for this person
+        for idx in indices:
+            if idx < len(self.person_embeddings) and self.person_embeddings[idx] is not None:
+                valid_embeddings.append(self.person_embeddings[idx].embedding)
+                valid_indices.append(idx)
+        
+        if len(valid_embeddings) < 3:  # Need at least 3 to identify outliers
+            return -1
+        
+        # Calculate cluster center
+        cluster_center = np.mean(valid_embeddings, axis=0)
+        cluster_center = self._normalize_embedding(cluster_center)
+        
+        # Find embedding most distant from center
+        max_distance = -1
+        outlier_idx = -1
+        
+        for i, embedding in enumerate(valid_embeddings):
+            distance = 1.0 - np.dot(embedding, cluster_center)  # Convert similarity to distance
+            if distance > max_distance:
+                max_distance = distance
+                outlier_idx = valid_indices[i]
+        
+        # Only return outlier if it's significantly distant (threshold)
+        outlier_threshold = 0.2  # Embedding should be at least 0.2 distance from center
+        if max_distance > outlier_threshold:
+            return outlier_idx
+        
+        return -1
+
+    def _calculate_cluster_consistency_score(self, person_name: str, query_embedding: np.ndarray) -> float:
+        """
+        Calculate how consistent a query embedding is with a person's cluster
+        
+        Args:
+            person_name: Name of the person
+            query_embedding: Query embedding to evaluate
+            
+        Returns:
+            Consistency score (higher = more consistent with cluster)
+        """
+        if person_name not in self.name_to_indices:
+            return 0.0
+            
+        indices = self.name_to_indices[person_name]
+        valid_embeddings = []
+        
+        # Collect valid embeddings for this person
+        for idx in indices:
+            if idx < len(self.person_embeddings) and self.person_embeddings[idx] is not None:
+                valid_embeddings.append(self.person_embeddings[idx].embedding)
+        
+        if len(valid_embeddings) == 0:
+            return 0.0
+        
+        if len(valid_embeddings) == 1:
+            # Single embedding - just return similarity
+            return np.dot(query_embedding, valid_embeddings[0])
+        
+        # Calculate similarities to all embeddings in the cluster
+        similarities = []
+        for embedding in valid_embeddings:
+            sim = np.dot(query_embedding, embedding)
+            similarities.append(sim)
+        
+        # Consistency score combines mean similarity and consistency (low std dev)
+        mean_sim = np.mean(similarities)
+        std_sim = np.std(similarities)
+        
+        # Higher consistency when similarities are both high and consistent
+        consistency_bonus = max(0, 0.1 - std_sim)  # Bonus for low standard deviation
+        
+        return mean_sim + consistency_bonus
+
     def _generate_person_name(self) -> str:
         """Generate unique person name"""
         name = f"Person_{self.person_counter:03d}"
@@ -128,6 +258,20 @@ class FAISSPersonGallery:
         # Normalize embedding
         normalized_embedding = self._normalize_embedding(embedding)
         
+        # Validate cluster consistency for existing persons
+        if person_name in self.name_to_indices and len(self.name_to_indices[person_name]) > 0:
+            consistency_score = self._calculate_cluster_consistency_score(person_name, normalized_embedding)
+            min_consistency_threshold = 0.7  # Minimum consistency to add to existing cluster
+            
+            if consistency_score < min_consistency_threshold:
+                logger.warning(f"Embedding consistency too low for {person_name}: {consistency_score:.3f} < {min_consistency_threshold}")
+                logger.warning(f"Consider this might be a different person or poor quality embedding")
+                # Still allow addition but log the warning for manual review
+        
+        # Calculate cluster density before adding (for logging)
+        density_before = self._calculate_cluster_density(person_name)
+        density_after = self._calculate_cluster_density(person_name, normalized_embedding)
+        
         # Create person embedding record
         person_embedding = PersonEmbedding(
             embedding=normalized_embedding,
@@ -148,27 +292,32 @@ class FAISSPersonGallery:
                 self.session_persons.add(person_name)
                 logger.debug(f"Tracking {person_name} as session person")
         
-        # Manage per-person embedding limit
+        # Manage per-person embedding limit with cluster-aware removal
         person_indices = self.name_to_indices[person_name]
         if len(person_indices) >= self.max_embeddings_per_person:
-            # Remove lowest quality embedding
-            # Filter out None entries (previously marked for removal)
-            valid_indices = [idx for idx in person_indices if idx < len(self.person_embeddings) and self.person_embeddings[idx] is not None]
+            # Try to find cluster outlier first (more intelligent removal)
+            outlier_idx = self._find_cluster_outlier(person_name)
             
-            if valid_indices:
-                qualities = [(self.person_embeddings[idx].quality, idx) for idx in valid_indices]
-                qualities.sort()  # Sort by quality (ascending)
-                worst_idx = qualities[0][1]
-                
-                # Remove from FAISS index (mark for removal)
-                # Note: FAISS doesn't support individual deletion, so we'll rebuild index periodically
-                self._mark_for_removal(worst_idx)
-                
-                # Remove from our tracking
-                person_indices.remove(worst_idx)
+            if outlier_idx != -1:
+                # Remove the outlier embedding
+                logger.debug(f"Removing cluster outlier for {person_name} (idx: {outlier_idx})")
+                self._mark_for_removal(outlier_idx)
+                person_indices.remove(outlier_idx)
             else:
-                # Clean up invalid indices
-                self.name_to_indices[person_name] = []
+                # Fallback to removing lowest quality embedding
+                valid_indices = [idx for idx in person_indices if idx < len(self.person_embeddings) and self.person_embeddings[idx] is not None]
+                
+                if valid_indices:
+                    qualities = [(self.person_embeddings[idx].quality, idx) for idx in valid_indices]
+                    qualities.sort()  # Sort by quality (ascending)
+                    worst_idx = qualities[0][1]
+                    
+                    logger.debug(f"Removing lowest quality embedding for {person_name} (idx: {worst_idx})")
+                    self._mark_for_removal(worst_idx)
+                    person_indices.remove(worst_idx)
+                else:
+                    # Clean up invalid indices
+                    self.name_to_indices[person_name] = []
         
         # Add to FAISS index
         self.index.add(normalized_embedding.reshape(1, -1))
@@ -181,7 +330,8 @@ class FAISSPersonGallery:
         
         self.total_embeddings += 1
         
-        logger.debug(f"Added embedding for {person_name} (quality: {quality:.3f})")
+        logger.debug(f"Added embedding for {person_name} (quality: {quality:.3f}, "
+                    f"density: {density_before:.3f}->{density_after:.3f})")
         return True
     
     def _mark_for_removal(self, idx: int):
@@ -289,6 +439,9 @@ class FAISSPersonGallery:
             
             # Medium/Low confidence - apply additional validation
             if similarity >= self.low_confidence_threshold:
+                # Calculate cluster consistency score
+                consistency_score = self._calculate_cluster_consistency_score(candidate_person, normalized_query)
+                
                 # Gallery priority boost - loaded persons get higher priority than session persons
                 gallery_boost = 0.0
                 if candidate_person in self.loaded_persons:
@@ -307,13 +460,18 @@ class FAISSPersonGallery:
                         max_temporal_boost = 0.05 if candidate_person in self.session_persons else 0.1
                         temporal_boost = max_temporal_boost * (1.0 - frames_since_seen / self.temporal_window)
                 
+                # Cluster consistency boost - reward embeddings that fit well with existing cluster
+                # This helps reduce false positives by preferring dense clusters over scattered ones
+                consistency_boost = max(0, (consistency_score - similarity) * 0.2)  # Up to 0.2 boost for good cluster fit
+                
                 # Combine all boosts
-                total_boost = gallery_boost + temporal_boost
+                total_boost = gallery_boost + temporal_boost + consistency_boost
                 adjusted_similarity = similarity + total_boost
                 
                 logger.debug(f"Candidate {candidate_person}: sim={similarity:.3f}, "
+                           f"consistency={consistency_score:.3f}, "
                            f"gallery_boost={gallery_boost:.3f}, temporal_boost={temporal_boost:.3f}, "
-                           f"adjusted={adjusted_similarity:.3f}")
+                           f"consistency_boost={consistency_boost:.3f}, adjusted={adjusted_similarity:.3f}")
                 
                 # Check if this is now the best candidate
                 if adjusted_similarity > best_similarity and adjusted_similarity >= self.medium_confidence_threshold:
@@ -453,9 +611,88 @@ class FAISSPersonGallery:
             'last_update': max(emb.timestamp for emb in embeddings).isoformat()
         }
     
-    def save_gallery(self, filepath: str) -> bool:
-        """Save gallery to file"""
+    def clean_outliers(self, min_embeddings_per_person: int = 3, max_iterations: int = 3) -> int:
+        """
+        Automatically remove outliers from all persons in the gallery
+        
+        Args:
+            min_embeddings_per_person: Minimum embeddings needed per person to perform outlier detection
+            max_iterations: Maximum outliers to remove per person
+            
+        Returns:
+            Number of outliers removed
+        """
+        if not hasattr(self, 'name_to_indices') or not self.name_to_indices:
+            return 0
+            
+        outliers_removed = 0
+        person_names = list(self.name_to_indices.keys())
+        
+        logger.info(f"🧹 Starting outlier cleaning for {len(person_names)} persons")
+        
+        for person_name in person_names:
+            person_count = len([
+                emb for emb in self.person_embeddings 
+                if emb is not None and emb.person_name == person_name
+            ])
+            
+            if person_count >= min_embeddings_per_person:
+                initial_density = self._calculate_cluster_density(person_name)
+                removed_for_person = 0
+                
+                for iteration in range(max_iterations):
+                    outlier_idx = self._find_cluster_outlier(person_name)
+                    
+                    if outlier_idx is not None and outlier_idx < len(self.person_embeddings):
+                        outlier_emb = self.person_embeddings[outlier_idx]
+                        if outlier_emb is not None and outlier_emb.person_name == person_name:
+                            # Check if we still have enough embeddings after removal
+                            current_count = len([
+                                emb for emb in self.person_embeddings 
+                                if emb is not None and emb.person_name == person_name
+                            ])
+                            
+                            if current_count > min_embeddings_per_person:
+                                self._mark_for_removal(outlier_idx)
+                                removed_for_person += 1
+                                outliers_removed += 1
+                                logger.debug(f"🗑️ Removed outlier for {person_name}: track {outlier_emb.track_id}")
+                            else:
+                                break
+                        else:
+                            break
+                    else:
+                        break
+                
+                if removed_for_person > 0:
+                    final_density = self._calculate_cluster_density(person_name)
+                    improvement = final_density - initial_density
+                    logger.info(f"✨ {person_name}: removed {removed_for_person} outliers, "
+                              f"density improved by {improvement:.3f}")
+        
+        if outliers_removed > 0:
+            self.rebuild_index()
+            logger.info(f"🧹 Outlier cleaning complete: {outliers_removed} outliers removed")
+        
+        return outliers_removed
+
+    def save_gallery(self, filepath: str, auto_clean_outliers: bool = False, 
+                    min_embeddings_for_cleaning: int = 3) -> bool:
+        """
+        Save gallery to file with optional outlier cleaning
+        
+        Args:
+            filepath: Path to save the gallery
+            auto_clean_outliers: Whether to automatically remove outliers before saving
+            min_embeddings_for_cleaning: Minimum embeddings per person to perform cleaning
+        """
         try:
+            # Auto-clean outliers if requested
+            if auto_clean_outliers:
+                outliers_removed = self.clean_outliers(min_embeddings_for_cleaning)
+                if outliers_removed > 0:
+                    logger.info(f"🧹 Auto-cleaned {outliers_removed} outliers before saving")
+            
             save_data = {
                 'embeddings': [emb for emb in self.person_embeddings if emb is not None],
                 'name_to_indices': self.name_to_indices,
@@ -563,7 +800,102 @@ class FAISSPersonGallery:
         self.total_embeddings = 0
         self.total_persons = 0
         
-        logger.info("🗑️ FAISS gallery cleared")
+        logger.info("✅ FAISS gallery cleared")
+
+    def get_cluster_analysis(self) -> Dict:
+        """
+        Analyze cluster quality for all persons
+        
+        Returns:
+            Dictionary with cluster analysis for each person
+        """
+        analysis = {}
+        
+        for person_name in self.name_to_indices.keys():
+            indices = self.name_to_indices[person_name]
+            valid_embeddings = []
+            
+            # Collect valid embeddings
+            for idx in indices:
+                if idx < len(self.person_embeddings) and self.person_embeddings[idx] is not None:
+                    valid_embeddings.append(self.person_embeddings[idx])
+            
+            if len(valid_embeddings) == 0:
+                continue
+                
+            # Calculate cluster metrics
+            cluster_density = self._calculate_cluster_density(person_name)
+            
+            # Find potential outliers
+            outlier_idx = self._find_cluster_outlier(person_name)
+            has_outlier = outlier_idx != -1
+            
+            # Calculate quality statistics
+            qualities = [emb.quality for emb in valid_embeddings]
+            
+            analysis[person_name] = {
+                'num_embeddings': len(valid_embeddings),
+                'cluster_density': cluster_density,
+                'has_outlier': has_outlier,
+                'outlier_idx': outlier_idx if has_outlier else None,
+                'avg_quality': np.mean(qualities),
+                'quality_std': np.std(qualities),
+                'quality_range': [min(qualities), max(qualities)]
+            }
+        
+        return analysis
+
+    def print_cluster_report(self):
+        """Print detailed cluster analysis report"""
+        analysis = self.get_cluster_analysis()
+        
+        print("\n" + "=" * 70)
+        print("🧮 CLUSTER ANALYSIS REPORT")
+        print("=" * 70)
+        
+        if not analysis:
+            print("❌ No clusters found")
+            return
+            
+        # Sort by cluster density (best clusters first)
+        sorted_persons = sorted(analysis.items(), key=lambda x: x[1]['cluster_density'], reverse=True)
+        
+        for person_name, metrics in sorted_persons:
+            print(f"\n👤 {person_name}:")
+            print(f"   Embeddings: {metrics['num_embeddings']}")
+            print(f"   Cluster Density: {metrics['cluster_density']:.3f}")
+            print(f"   Average Quality: {metrics['avg_quality']:.3f} (±{metrics['quality_std']:.3f})")
+            print(f"   Quality Range: {metrics['quality_range'][0]:.3f} - {metrics['quality_range'][1]:.3f}")
+            
+            if metrics['has_outlier']:
+                print(f"   ⚠️  Potential outlier detected (idx: {metrics['outlier_idx']})")
+            else:
+                print(f"   ✅ No outliers detected")
+            
+            # Cluster quality assessment
+            if metrics['cluster_density'] > 0.9:
+                quality = "Excellent"
+            elif metrics['cluster_density'] > 0.8:
+                quality = "Good"
+            elif metrics['cluster_density'] > 0.7:
+                quality = "Fair"
+            else:
+                quality = "Poor"
+            
+            print(f"   Cluster Quality: {quality}")
+        
+        # Overall statistics
+        total_embeddings = sum(m['num_embeddings'] for m in analysis.values())
+        avg_density = np.mean([m['cluster_density'] for m in analysis.values()])
+        persons_with_outliers = sum(1 for m in analysis.values() if m['has_outlier'])
+        
+        print(f"\n📊 OVERALL CLUSTER STATISTICS:")
+        print(f"   Total Persons: {len(analysis)}")
+        print(f"   Total Embeddings: {total_embeddings}")
+        print(f"   Average Cluster Density: {avg_density:.3f}")
+        print(f"   Persons with Outliers: {persons_with_outliers}/{len(analysis)}")
+        
+        print("=" * 70)
     
     def print_gallery_report(self):
         """Print comprehensive gallery report"""
