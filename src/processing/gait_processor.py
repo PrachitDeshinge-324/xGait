@@ -275,33 +275,68 @@ class GaitProcessor:
                     parsing_sequence = list(self.track_parsing_masks[track_id])
                     silhouette_sequence = list(self.track_silhouettes[track_id])
                     
-                    feature_vector = self.xgait_model.extract_features_from_sequence(
-                        silhouettes=silhouette_sequence,
-                        parsing_masks=parsing_sequence
-                    )
+                    # Additional safety checks before XGait extraction
+                    if not silhouette_sequence or not parsing_sequence:
+                        if self.config.verbose:
+                            print(f"⚠️ Empty sequences for track {track_id}")
+                    elif len(silhouette_sequence) != len(parsing_sequence):
+                        if self.config.verbose:
+                            print(f"⚠️ Sequence length mismatch for track {track_id}: sil={len(silhouette_sequence)}, par={len(parsing_sequence)}")
+                    else:
+                        # Safely extract features with timeout protection
+                        feature_vector = None
+                        try:
+                            # Import signal for timeout (Unix only)
+                            import signal
+                            
+                            def timeout_handler(signum, frame):
+                                raise TimeoutError("XGait extraction timed out")
+                            
+                            # Set 30-second timeout for feature extraction
+                            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+                            signal.alarm(30)
+                            
+                            try:
+                                feature_vector = self.xgait_model.extract_features_from_sequence(
+                                    silhouettes=silhouette_sequence,
+                                    parsing_masks=parsing_sequence
+                                )
+                            finally:
+                                signal.alarm(0)  # Cancel timeout
+                                signal.signal(signal.SIGALRM, old_handler)  # Restore handler
+                                
+                        except (TimeoutError, Exception) as extraction_error:
+                            if self.config.verbose:
+                                print(f"⚠️ XGait extraction failed for track {track_id}: {extraction_error}")
+                            feature_vector = None
                     
                     # Only proceed if feature extraction was successful
-                    if feature_vector is not None and feature_vector.size > 0:
+                    if feature_vector is not None and hasattr(feature_vector, 'size') and feature_vector.size > 0:
                         # Use parsing-based quality calculation
                         sequence_quality = self._compute_sequence_quality(crop_sequence, parsing_sequence)
                         
                         # Update identity manager with embeddings
-                        self.identity_manager.update_track_embeddings(track_id, feature_vector, sequence_quality)
-                        
-                        self.track_last_xgait_extraction[track_id] = frame_count
-                        xgait_extracted = True
-                        
-                        # PERF-007 fix: deque with maxlen automatically manages size efficiently
-                        # No need for manual pop(0) - deque handles overflow automatically
-                        self.track_gait_features[track_id].append(feature_vector)
+                        try:
+                            self.identity_manager.update_track_embeddings(track_id, feature_vector, sequence_quality)
+                            self.track_last_xgait_extraction[track_id] = frame_count
+                            xgait_extracted = True
+                            
+                            # PERF-007 fix: deque with maxlen automatically manages size efficiently
+                            # No need for manual pop(0) - deque handles overflow automatically
+                            self.track_gait_features[track_id].append(feature_vector)
+                        except Exception as update_error:
+                            if self.config.verbose:
+                                print(f"⚠️ Failed to update embeddings for track {track_id}: {update_error}")
                     else:
                         if self.config.verbose:
-                            print(f"⚠️ XGait feature extraction failed for track {track_id} (sequence too short or processing error)")
+                            print(f"⚠️ XGait feature extraction failed for track {track_id} (invalid or empty features)")
                         
                 except Exception as e:
                     if self.config.verbose:
-                        print(f"⚠️  XGait extraction error for track {track_id}: {e}")
-                    feature_vector = np.zeros(16384)  # XGait full feature dimension
+                        print(f"⚠️ XGait extraction error for track {track_id}: {e}")
+                        import traceback
+                        print(f"   Traceback: {traceback.format_exc()}")
+                    # Don't set feature_vector to zeros - leave as initialized
             
             processing_time = time.time() - start_time
             

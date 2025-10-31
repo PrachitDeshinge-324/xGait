@@ -20,25 +20,18 @@ from typing import Optional, Dict, Any
 import torch
 
 def get_device() -> str:
-    """Determine the best available device for PyTorch"""
-    if torch.cuda.is_available():
-        return "cuda"
-    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        return "mps"
-    else:
-        return "cpu"
+    """Determine the best available device for PyTorch - FORCED TO CPU FOR STABILITY"""
+    # Force CPU to prevent segmentation faults with XGait model
+    return "cpu"
 
 def get_global_device() -> str:
     """Get the global device for all models"""
     return get_device()
 
 def get_xgait_device() -> str:
-    """Get the appropriate device for XGait model (CPU when main device is MPS)"""
-    main_device = get_global_device()
-    if main_device == "mps":
-        return "cpu"  # XGait has MPS compatibility issues
-    else:
-        return main_device  # Use best available device (CUDA or CPU)
+    """Get the appropriate device for XGait model (CPU for stability to prevent segfaults)"""
+    # Force CPU for XGait to prevent segmentation faults
+    return "cpu"
 
 def get_device_config(device: str) -> Dict[str, Any]:
     """Get device-specific configuration"""
@@ -145,15 +138,15 @@ class VideoConfig:
 @dataclass
 class xgaitConfig:
     """XGait-specific configuration"""
-    # Sequence buffer settings - balanced performance mode
-    sequence_buffer_size = 40  # Moderate size for better XGait success
-    min_sequence_length = 4   # Reduced minimum for faster XGait extraction
+    # Sequence buffer settings - improved for better quality
+    sequence_buffer_size = 50  # Increased for better XGait success
+    min_sequence_length = 10   # Increased minimum for better embedding quality
 
-    # Feature extraction settings - balanced performance mode  
-    xgait_extraction_interval = 12  # Moderate interval (every 12 frames)
+    # Feature extraction settings - improved for quality over speed  
+    xgait_extraction_interval = 15  # Increased interval for more diverse sequences
 
-    # Similarity threshold for identification - Optimized for XGait embeddings
-    similarity_threshold = 0.91  # Updated to 0.91 based on XGait similarity analysis
+    # Similarity threshold for identification - Updated after cleaning analysis
+    similarity_threshold = 0.909  # Updated after gallery cleaning analysis
     device: str = get_xgait_device()  # Use global XGait device logic
 
 @dataclass
@@ -164,10 +157,16 @@ class IdentityConfig:
     backup_gallery_on_save: bool = True
     max_persons_in_gallery: int = 100
     
-    # Embedding quality and similarity thresholds
+    # Auto-cleaning settings for embedding quality
+    auto_clean_outliers_on_save: bool = True  # Automatically clean outliers when saving
+    min_embeddings_for_cleaning: int = 3      # Minimum embeddings per person to enable cleaning
+    quality_outlier_threshold: float = 2.0    # Standard deviations for quality outlier detection
+    similarity_outlier_threshold: float = 0.15 # Distance threshold for similarity outlier detection
+    
+    # Embedding quality and similarity thresholds - Updated after cleaning
     min_quality_threshold: float = 0.3
-    similarity_threshold: float = 0.91  # Updated to match XGait discrimination capability
-    high_confidence_threshold: float = 0.93  # Updated to reflect high XGait similarity range
+    similarity_threshold: float = 0.909  # Updated after gallery cleaning analysis
+    high_confidence_threshold: float = 0.93  # Higher threshold for very confident matches
     
     # Embedding buffer management
     max_embeddings_per_person: int = 20

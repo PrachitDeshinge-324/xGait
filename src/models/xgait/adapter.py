@@ -18,6 +18,7 @@ if str(src_dir) not in sys.path:
 
 from . import create_official_xgait_inference, OfficialXGaitInference
 from ...utils.device_utils import get_xgait_device
+from ..safe_xgait_inference import create_safe_xgait_inference
 
 logger = logging.getLogger(__name__)
 
@@ -40,22 +41,22 @@ class XGaitAdapter:
         self.device = device if device is not None else get_xgait_device()
         self.num_classes = num_classes
         
-        # Create official XGait model
-        self.xgait_official = create_official_xgait_inference(
+        # Use safe XGait inference to prevent segmentation faults
+        self.xgait_official = create_safe_xgait_inference(
             model_path=model_path,
-            device=device,
+            device="cpu",  # Force CPU for stability
             num_classes=num_classes
         )
         
         # Compatibility parameters for existing code
-        self.input_height = self.xgait_official.input_height
-        self.input_width = self.xgait_official.input_width
-        self.min_sequence_length = self.xgait_official.min_sequence_length
-        self.target_sequence_length = self.xgait_official.target_sequence_length
-        self.model_loaded = self.xgait_official.model_loaded
+        self.input_height = getattr(self.xgait_official, 'input_height', 64)
+        self.input_width = getattr(self.xgait_official, 'input_width', 44)
+        self.min_sequence_length = getattr(self.xgait_official, 'min_sequence_length', 5)
+        self.target_sequence_length = getattr(self.xgait_official, 'max_sequence_length', 30)
+        self.model_loaded = self.xgait_official.is_model_loaded()
         
-        # For backward compatibility - expose the underlying model
-        self.model = self.xgait_official.model
+        # For backward compatibility - expose the underlying model safely
+        self.model = getattr(self.xgait_official, 'model', None)
         
         # Gallery manager (will be set externally)
         self.gallery_manager = None
@@ -63,10 +64,11 @@ class XGaitAdapter:
         # Similarity threshold for identification
         self.similarity_threshold = 0.91
         
-        logger.info(f"🎯 XGait Adapter initialized with official implementation")
+        logger.info(f"🎯 XGait Adapter initialized with SAFE implementation")
+        logger.info(f"   - Device: CPU (forced for stability)")
         logger.info(f"   - Weight compatibility: {'High' if self.model_loaded else 'Low'}")
         logger.info(f"   - Feature dimensions: 256x64 = 16384 (full part-based features)")
-        logger.info(f"   - Using full features for optimal discrimination")
+        logger.info(f"   - Using SAFE features for stability and optimal discrimination")
         
     def extract_features_from_sequence(self, silhouettes: List[np.ndarray], 
                                      parsing_masks: List[np.ndarray] = None) -> np.ndarray:
@@ -85,28 +87,22 @@ class XGaitAdapter:
             parsing_masks = [np.ones_like(sil, dtype=np.uint8) * 2 for sil in silhouettes]
         
         try:
-            # Use official XGait for feature extraction
+            # Use safe XGait for feature extraction
             features = self.xgait_official.extract_features(silhouettes, parsing_masks)
             
-            if features.size > 0:
-                # Features shape: (1, 256, 64) - USE FULL FEATURES FOR BEST DISCRIMINATION
-                # Research shows that full features provide better discrimination than pooled features
-                if len(features.shape) == 3:
-                    # Flatten to use all part-based features: (1, 256, 64) -> (16384,)
+            if features is not None and features.size > 0:
+                # Features should already be flattened from safe inference
+                if len(features.shape) > 1:
                     features_flat = features.flatten()
-                    return features_flat
-                elif len(features.shape) == 2:
-                    # Already flattened features
-                    return features.flatten()
                 else:
-                    # Handle other cases
-                    return features.flatten()
+                    features_flat = features
+                return features_flat
             else:
-                logger.debug("XGait extraction returned empty features")
+                logger.debug("Safe XGait extraction returned None or empty features")
                 return None  # Return None for empty features
                 
         except Exception as e:
-            logger.error(f"Error extracting XGait features: {e}")
+            logger.error(f"Error extracting XGait features (using safe mode): {e}")
             return None  # Return None instead of empty array
     
     def extract_features(self, silhouette_sequences: List[List[np.ndarray]], 

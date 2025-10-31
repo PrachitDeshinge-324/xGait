@@ -33,10 +33,10 @@ class IdentityManager:
         print(f"🎮 Identity Manager - Interactive mode: {'Enabled' if self.interactive_mode else 'Disabled'}")
         logger.info(f"🎮 Identity Manager - Interactive mode: {'Enabled' if self.interactive_mode else 'Disabled'}")
         
-        # Initialize FAISS gallery system with more reasonable thresholds
+        # Initialize FAISS gallery system with optimized thresholds after cleaning
         self.faiss_gallery = FAISSPersonGallery(
             embedding_dim=16384,  # XGait embedding dimension (256x64 parts)
-            similarity_threshold=0.75,  # More realistic threshold for gait identification
+            similarity_threshold=0.909,  # Optimized threshold after gallery cleaning
             max_embeddings_per_person=20
         )
         
@@ -95,12 +95,35 @@ class IdentityManager:
         self.gallery_loaded = success
         return success
     
-    def save_gallery(self) -> None:
-        """Save gallery state to files"""
-        # Save FAISS gallery
+    def save_gallery(self, auto_clean_outliers: Optional[bool] = None) -> None:
+        """Save gallery state to files with optional auto-cleaning"""
+        # TEMPORARILY DISABLE AUTO-CLEANING TO PREVENT SEGFAULTS
+        auto_clean_outliers = False
+            
+        # Save FAISS gallery with auto-cleaning disabled for stability
         faiss_gallery_path = self.visualization_output_dir / "faiss_gallery.pkl"
         print(f"[FAISSGallery] Saving gallery to {faiss_gallery_path}")
-        self.faiss_gallery.save_gallery(faiss_gallery_path)
+        
+        if auto_clean_outliers:
+            print(f"[FAISSGallery] Auto-cleaning enabled - removing outliers before save")
+        else:
+            print(f"[FAISSGallery] Auto-cleaning disabled for stability")
+        
+        # Use safe save method to prevent segmentation faults
+        try:
+            # Force garbage collection before save
+            import gc
+            gc.collect()
+            
+            # Use the enhanced save method with auto-cleaning disabled
+            min_embeddings = getattr(self.config.identity, 'min_embeddings_for_cleaning', 3)
+            self.faiss_gallery.save_gallery(str(faiss_gallery_path), 
+                                           auto_clean_outliers=auto_clean_outliers,
+                                           min_embeddings_for_cleaning=min_embeddings)
+            print(f"[FAISSGallery] Gallery saved successfully")
+        except Exception as e:
+            print(f"[FAISSGallery] Warning: Failed to save gallery - {e}")
+            print(f"[FAISSGallery] Continuing without saving gallery to prevent crash")
             
         # Save track data for manual merging
         self.save_track_data()

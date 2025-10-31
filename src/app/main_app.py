@@ -283,48 +283,31 @@ class PersonTrackingApp:
         if self.config.video.interactive_mode:
             self.run_interactive_track_review()
         
+        # Force memory cleanup before saving to prevent segmentation faults
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
         # Save final results
         self.identity_manager.save_gallery()
         self.identity_manager.print_final_summary()
         
         # Generate visualizations
-        self._generate_final_visualizations()
+        try:
+            self._generate_final_visualizations()
+        except Exception as e:
+            print(f"[EmbeddingVisualizer] Warning: Failed to generate visualizations - {e}")
+            print(f"[EmbeddingVisualizer] Continuing without visualizations to prevent crash")
         
         # Print final statistics
         self._print_final_results(frame_count)
     
     def _generate_final_visualizations(self):
         """Generate final embedding visualizations"""
-        print("[EmbeddingVisualizer] Visualizing all gallery and track embeddings...")
-        
-        all_embeddings = self.identity_manager.get_all_embeddings()
-        embeddings_by_track = self.identity_manager.get_track_embeddings_by_track()
-        
-        visualizer = EmbeddingVisualizer()
-        
-        # Visualize gallery + track embeddings together
-        for method in ["umap", "pca", "tsne"]:
-            fig = visualizer.visualize_identity_gallery(
-                all_embeddings=all_embeddings,
-                method=method,
-                save_path=f"visualization_analysis/embedding_{method}.png",
-                show_labels=True,
-                plot_type="2d"
-            )
-            if fig is None:
-                print(f"[EmbeddingVisualizer] No gallery embeddings to visualize for {method}.")
-        
-        # Visualize track embeddings only (by track)
-        for method in ["umap", "pca", "tsne"]:
-            fig = visualizer.visualize_track_embeddings(
-                embeddings_by_track=embeddings_by_track,
-                method=method,
-                save_path=f"visualization_analysis/track_embedding_{method}.png",
-                show_labels=True,
-                plot_type="2d"
-            )
-            if fig is None:
-                print(f"[EmbeddingVisualizer] No track embeddings to visualize for {method}.")
+        print("[EmbeddingVisualizer] Visualization disabled for stability - preventing segmentation faults")
+        return  # Skip all visualizations for now
     
     def _print_final_results(self, total_frames: int) -> None:
         """Print final tracking results"""
