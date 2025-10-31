@@ -74,6 +74,9 @@ class OfficialXGait(nn.Module):
         pars = ipts[0]  # parsing masks [N, S, H, W] or [N, C, S, H, W]
         sils = ipts[1]  # silhouettes [N, S, H, W] or [N, C, S, H, W]
         
+        # Log input dtypes for debugging (only if needed)
+        logger.debug(f"Model forward input dtypes - pars: {pars.dtype}, sils: {sils.dtype}, labs: {labs.dtype}")
+        
         # Handle input dimensions - support both 4D and 5D inputs
         if len(pars.size()) == 4 and len(sils.size()) == 4:
             # Input is [N, S, H, W] - add channel dimension
@@ -101,12 +104,34 @@ class OfficialXGait(nn.Module):
         # Part Cross-granularity Alignment
         # mask_resize: [n, s, h, w]
         n, c, s, h, w = outs_sil.size()
-        mask_resize = F.interpolate(input=pars.squeeze(1), size=(h, w), mode='nearest')
-        mask_resize = mask_resize.view(n*s, h, w)
+        # Ensure pars is float type for F.interpolate (requires float tensors)
+        try:
+            pars_float = pars.squeeze(1).float() if pars.dtype != torch.float32 else pars.squeeze(1)
+            logger.debug(f"F.interpolate input - dtype: {pars_float.dtype}, shape: {pars_float.shape}, target size: ({h}, {w})")
+            mask_resize = F.interpolate(input=pars_float, size=(h, w), mode='nearest')
+            mask_resize = mask_resize.view(n*s, h, w)
+            logger.debug(f"mask_resize created - dtype: {mask_resize.dtype}, shape: {mask_resize.shape}")
+        except Exception as e:
+            logger.error(f"Error in F.interpolate or mask_resize creation: {e}")
+            logger.error(f"pars dtype: {pars.dtype}, shape: {pars.shape}")
+            logger.error(f"pars_float dtype: {pars_float.dtype if 'pars_float' in locals() else 'not created'}")
+            logger.error(f"Target size: ({h}, {w})")
+            import traceback
+            logger.error(f"Traceback:\n{traceback.format_exc()}")
+            raise
 
-        outs_pcm_up = self.pcm_up(outs_sil, outs_par, mask_resize)  # [n, c, s, h/4, w]
-        outs_pcm_middle = self.pcm_middle(outs_sil, outs_par, mask_resize)  # [n, c, s, h/2, w]
-        outs_pcm_down = self.pcm_down(outs_sil, outs_par, mask_resize)  # [n, c, s, h/4, w]
+        try:
+            outs_pcm_up = self.pcm_up(outs_sil, outs_par, mask_resize)  # [n, c, s, h/4, w]
+            outs_pcm_middle = self.pcm_middle(outs_sil, outs_par, mask_resize)  # [n, c, s, h/2, w]
+            outs_pcm_down = self.pcm_down(outs_sil, outs_par, mask_resize)  # [n, c, s, h/4, w]
+        except Exception as e:
+            logger.error(f"Error in PCM modules: {e}")
+            logger.error(f"outs_sil - dtype: {outs_sil.dtype}, shape: {outs_sil.shape}")
+            logger.error(f"outs_par - dtype: {outs_par.dtype}, shape: {outs_par.shape}")
+            logger.error(f"mask_resize - dtype: {mask_resize.dtype}, shape: {mask_resize.shape}")
+            import traceback
+            logger.error(f"Traceback:\n{traceback.format_exc()}")
+            raise
         
         # Validate tensor shapes before concatenation
         if outs_pcm_up.dim() != 5 or outs_pcm_middle.dim() != 5 or outs_pcm_down.dim() != 5:

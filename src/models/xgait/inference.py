@@ -203,21 +203,21 @@ class OfficialXGaitInference:
         
         # Convert to tensors [S, H, W] with proper dtype for semantic segmentation
         sils_array = np.array(processed_sils, dtype=np.float32)
-        pars_array = np.array(processed_pars, dtype=np.int64)  # Keep as integers for semantic labels
+        pars_array = np.array(processed_pars, dtype=np.float32)  # Float for F.interpolate compatibility
         
         # PERF-001 fix: Use tensor pooling to prevent memory fragmentation
         sils_tensor = self.get_pooled_tensor(sils_array.shape, torch.float32)
         sils_tensor.copy_(torch.from_numpy(sils_array))
         
-        # Create parsing tensor with proper dtype handling for F.interpolate
-        # The model uses F.interpolate with mode='nearest' which requires float tensors
-        # but preserves exact integer class values due to nearest neighbor interpolation
+        # Create parsing tensor as Float for F.interpolate compatibility
+        # F.interpolate requires float tensors, but class values remain as integers (0.0, 1.0, etc.)
         pars_tensor = self.get_pooled_tensor(pars_array.shape, torch.float32)
-        pars_tensor.copy_(torch.from_numpy(pars_array).float())
+        pars_tensor.copy_(torch.from_numpy(pars_array))
         
-        # Validate that semantic class indices are preserved (should be integers 0-6)
-        if torch.any((pars_tensor % 1) != 0):
-            logger.warning("Parsing mask contains non-integer values - potential precision loss detected")
+        # Validate that semantic class indices are in expected range (should be integer values 0-6)
+        unique_values = torch.unique(pars_tensor).long()
+        if unique_values.min() < 0 or unique_values.max() > 6:
+            logger.warning(f"Parsing mask contains out-of-range class values: min={unique_values.min()}, max={unique_values.max()}")
         
         unique_values = torch.unique(pars_tensor).long()  # Get unique class IDs as integers
         expected_classes = set(range(7))  # Classes 0-6 for human parsing
@@ -261,12 +261,22 @@ class OfficialXGaitInference:
                 features = output['inference_feat']['embeddings']
                 
                 # Features shape: [batch, feature_dim, parts] e.g., [1, 256, 64]
-                # Apply proper normalization for better discrimination
-                # L2 normalization to unit sphere for each part
-                features_normalized = torch.nn.functional.normalize(features, p=2, dim=1)
+                # Flatten to single vector per sample: [batch, feature_dim * parts]
+                batch_size = features.size(0)
+                features_flat = features.view(batch_size, -1)  # [1, 16384]
+                
+                # L2 normalization across the ENTIRE embedding vector (not per-part)
+                # This preserves relative magnitudes and improves discrimination
+                features_normalized = torch.nn.functional.normalize(features_flat, p=2, dim=1)
+                
+                # DEBUG: Log embedding statistics to understand discrimination issue
+                logger.debug(f"Embedding stats - mean: {features_flat.mean():.4f}, std: {features_flat.std():.4f}, "
+                           f"min: {features_flat.min():.4f}, max: {features_flat.max():.4f}")
+                logger.debug(f"Normalized embedding - mean: {features_normalized.mean():.4f}, "
+                           f"std: {features_normalized.std():.4f}, norm: {torch.norm(features_normalized, p=2):.4f}")
                 
                 # Move to CPU and convert to numpy immediately to free GPU memory
-                result = features_normalized.detach().cpu().numpy()  # [batch, feature_dim, parts]
+                result = features_normalized.detach().cpu().numpy()  # [batch, 16384]
                 
                 # PERF-001 fix: Return tensors to pool and cleanup
                 self.return_tensor_to_pool(sils)
@@ -283,7 +293,22 @@ class OfficialXGaitInference:
         except Exception as e:
             logger.error(f"Error extracting features: {e}")
             import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            
+            # Log detailed tensor information for debugging
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Error message: {str(e)}")
+            
+            # Try to log tensor dtypes if they exist
+            try:
+                if 'pars' in locals():
+                    logger.error(f"pars tensor - dtype: {pars.dtype}, shape: {pars.shape}")
+                if 'sils' in locals():
+                    logger.error(f"sils tensor - dtype: {sils.dtype}, shape: {sils.shape}")
+                if 'labs' in locals():
+                    logger.error(f"labs tensor - dtype: {labs.dtype}, shape: {labs.shape}")
+            except:
+                pass
             
             # PERF-001 fix: Cleanup on error
             self.cleanup_tensor_pool()

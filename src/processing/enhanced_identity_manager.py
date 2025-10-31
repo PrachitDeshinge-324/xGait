@@ -163,7 +163,7 @@ class IdentityManager:
             )
             
             # VERY STRICT matching for new tracks to prevent false positives
-            if person_name and confidence >= 0.85:  # Much higher threshold for new track assignments
+            if person_name and confidence >= 0.90:  # High threshold for new track assignments (raised for accuracy)
                 # Strong match found - but double-check it's not a spatial conflict
                 # Check if this person is already assigned to another track in recent frames
                 recent_frames = range(max(0, frame_count - 10), frame_count)
@@ -200,17 +200,23 @@ class IdentityManager:
                     person_name = None  # Force new person creation below
             
             # If no strong match or person recently seen, handle based on mode
-            if not person_name or confidence < 0.85:
-                print(f"DEBUG: Track {track_id}, Interactive mode: {self.interactive_mode}, person_name: {person_name}, confidence: {confidence}")
-                if self.interactive_mode:
+            if not person_name or confidence < 0.90:
+                
+                # Check if person was identified from gallery (even with lower confidence)
+                if person_name and confidence >= 0.85:  # Person found in gallery with medium confidence
+                    # BOTH MODES: Accept gallery identification if confidence is reasonable
+                    logger.info(f"Accepting gallery match for track {track_id}: {person_name} (conf: {confidence:.3f})")
+                    self.faiss_gallery.add_person_embedding(
+                        person_name, track_id, embedding, quality, frame_count
+                    )
+                elif self.interactive_mode:
                     # INTERACTIVE MODE: Don't create automatic persons - leave unidentified
-                    print(f"DEBUG: INTERACTIVE MODE - Skipping track {track_id}")
-                    logger.info(f"Track {track_id}: No strong gallery match (conf: {confidence:.3f}) - leaving UNIDENTIFIED for interactive assignment")
+                    conf_str = f"{confidence:.3f}" if person_name else "N/A"
+                    logger.debug(f"Track {track_id}: No strong gallery match (conf: {conf_str}) - leaving UNIDENTIFIED for interactive assignment")
                     # Skip this track - don't add to frame_assignments, will show as "UNIDENTIFIED" in visualization
                     continue
                 else:
                     # NON-INTERACTIVE MODE: Create new person automatically (old behavior)
-                    print(f"DEBUG: NON-INTERACTIVE MODE - Creating person for track {track_id}")
                     person_name = self.faiss_gallery.create_new_person(
                         track_id=track_id,
                         embedding=embedding,
@@ -218,8 +224,7 @@ class IdentityManager:
                         frame_number=frame_count
                     )
                     confidence = 0.8  # Default confidence for new person
-                    logger.info(f"Created new person: {person_name} for track {track_id} "
-                              f"(original confidence: {confidence if 'confidence' in locals() else 'N/A'})")
+                    logger.info(f"Created new person: {person_name} for track {track_id}")
             
             # Add confirmed assignments to gallery and tracking
             if person_name:  # Only if we have a valid assignment
@@ -251,8 +256,10 @@ class IdentityManager:
         for person_name, track_list in person_to_tracks.items():
             if len(track_list) > 1:
                 # Multiple tracks assigned to same person - CONFLICT!
-                logger.warning(f"🚨 SPATIAL CONFLICT: Person '{person_name}' assigned to {len(track_list)} tracks in frame {frame_count}")
-                logger.warning(f"   Conflicted tracks: {[f'T{tid}({conf:.2f})' for tid, conf in track_list]}")
+                # This means: Same person cannot be in 2 places at once
+                logger.warning(f"🚨 SPATIAL CONFLICT: '{person_name}' assigned to {len(track_list)} different tracks (IMPOSSIBLE - one person can't be in multiple locations!)")
+                logger.warning(f"   Conflicted tracks: {[f'Track {tid} (confidence: {conf:.2f})' for tid, conf in track_list]}")
+                logger.warning(f"   Resolution: Keeping highest confidence match, others are DIFFERENT people")
                 
                 # Keep the track with highest confidence, reassign others
                 track_list.sort(key=lambda x: x[1], reverse=True)  # Sort by confidence desc
@@ -263,22 +270,29 @@ class IdentityManager:
                 
                 # Reassign conflicting tracks
                 for conflicted_track_id, conf in track_list[1:]:
-                    logger.warning(f"⚠️ Reassigning conflicted track {conflicted_track_id} (was {person_name}, conf: {conf:.3f})")
+                    logger.warning(f"⚠️ Spatial conflict: Track {conflicted_track_id} cannot be '{person_name}' (already assigned to track {best_track_id})")
                     
                     # Get the original embedding and quality for this track
                     embedding, quality = frame_track_embeddings[conflicted_track_id]
                     
-                    # Try to find alternative assignment or create new person
+                    # Try to find alternative assignment (different person from gallery)
                     alternative_person = self._find_alternative_assignment(conflicted_track_id, person_name, embedding, frame_count)
                     if alternative_person:
-                        resolved_assignments[conflicted_track_id] = alternative_person
-                        assignment_confidences[conflicted_track_id] = 0.7  # Lower confidence for reassignment
-                        logger.info(f"➡️ Track {conflicted_track_id} reassigned to {alternative_person}")
+                        # Only accept alternative if it's from loaded gallery or has high confidence
+                        if alternative_person in self.faiss_gallery.loaded_persons or not self.interactive_mode:
+                            resolved_assignments[conflicted_track_id] = alternative_person
+                            assignment_confidences[conflicted_track_id] = 0.7  # Lower confidence for reassignment
+                            logger.info(f"➡️ Track {conflicted_track_id} reassigned to different person: {alternative_person} (avoiding duplicate {person_name})")
+                        else:
+                            # Interactive mode with session-only alternative - leave unidentified
+                            logger.debug(f"👤 Track {conflicted_track_id}: Alternative person is session-only in interactive mode - leaving UNIDENTIFIED")
+                            # Don't add to resolved_assignments
                     else:
                         # Handle new person creation based on interactive mode
                         if self.interactive_mode:
                             # INTERACTIVE MODE: Don't create new persons, leave unidentified
-                            logger.info(f"⚠️ Interactive mode: Track {conflicted_track_id} conflict unresolved - leaving UNIDENTIFIED")
+                            # This is a DIFFERENT person (not in gallery) - correctly mark as UNIDENTIFIED
+                            logger.debug(f"👤 Track {conflicted_track_id}: Different person (not '{person_name}', not in gallery) - leaving UNIDENTIFIED for manual identification")
                             # Don't add to resolved_assignments, will remain unidentified
                         else:
                             # NON-INTERACTIVE MODE: Create new person for this conflict

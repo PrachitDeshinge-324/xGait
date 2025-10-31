@@ -7,7 +7,6 @@ import os
 import cv2
 import numpy as np
 import time
-import queue
 from collections import defaultdict, deque
 from typing import List, Tuple, Dict, Optional
 from pathlib import Path
@@ -50,8 +49,8 @@ class GaitProcessor:
         
         # Remove threading for GPU-bound operations to prevent CUDA context issues
         # Use sequential processing to avoid thread-unsafe PyTorch operations
-        self.processing_queue = []  # Simple queue for sequential processing
-        self.visualization_queue = queue.Queue(maxsize=20)
+        self.processing_queue = []  # Simple list for sequential processing (no threading)
+        # Removed visualization_queue to prevent resource leaks - not used in sequential mode
         
         # PERF-007 fix: Use deque for efficient FIFO operations instead of list.pop(0)
         # Buffer management configuration
@@ -147,6 +146,9 @@ class GaitProcessor:
         should_process_parsing = (self.parsing_frame_counter % self.parsing_skip_interval == 0)
         
         # Always track detections, but skip heavy parsing operations based on interval
+        # Batch collection for parsing processing
+        parsing_batch = []  # List of (track_id, crop_resized, crop_mask)
+        
         for result in tracking_results:
             # Handle both old (3-tuple) and new (4-tuple) formats
             if len(result) == 4:
@@ -177,27 +179,124 @@ class GaitProcessor:
             if hasattr(self.identity_manager, 'update_track_context'):
                 self.identity_manager.update_track_context(track_id, crop, (x1, y1, x2, y2))
             
-            # Skip heavy parsing processing on most frames for performance
-            if not should_process_parsing:
-                continue
-            
-            # Process crops that have minimum size (only on selected frames)
+            # Process crops that have minimum size
             if crop.shape[0] > 40 and crop.shape[1] > 20:
-                # Process directly instead of using thread pool (GPU operations are not thread-safe)
-                result = self._process_single_track_parsing(track_id, crop.copy(), frame_count, crop_mask)
-                if result.get('success', False):
-                    self._store_parsing_result(result)
+                # ALWAYS store silhouettes (from YOLO masks) - they're already computed, no overhead
+                if crop_mask is not None:
+                    # Resize crop and mask for storage
+                    crop_resized = cv2.resize(crop, (128, 256))
+                    mask_resized = cv2.resize(crop_mask, (128, 256), interpolation=cv2.INTER_NEAREST)
+                    silhouette = (mask_resized > 127).astype(np.uint8) * 255
+                    
+                    # Store silhouette and crop EVERY frame (no skip)
+                    self.track_silhouettes[track_id].append(silhouette)
+                    self.track_crops[track_id].append(crop_resized)
+                
+                    # Collect for batch parsing if needed
+                    if should_process_parsing:
+                        parsing_batch.append((track_id, crop_resized, mask_resized))
+        
+        # Batch process parsing for all tracks at once (much faster!)
+        if should_process_parsing and parsing_batch:
+            self._process_batch_parsing(parsing_batch, frame_count)
         
         # No longer need to collect from queue since we process directly
         pass
         
-        # Debug visualizations - only when explicitly enabled and much less frequent
-        if (self.enable_debug_outputs and 
-            frame_count % 50 == 0 and  # Every 50 frames instead of 10
+        # Debug visualizations - save more frequently to show silhouette, parsing, and gait processing
+        if (self.enable_debug_outputs and
+            frame_count % 30 == 0 and  # Every 30 frames for better debugging
             len(tracking_results) > 0):  # Only when there are actual tracks
             # Convert back to 3-tuple format for visualization compatibility
             vis_results = [(r[0], r[1], r[2]) for r in tracking_results]
             self._save_debug_visualization(frame, vis_results, frame_count)
+    
+    def _process_batch_parsing(self, parsing_batch: List[Tuple[int, np.ndarray, np.ndarray]], frame_count: int):
+        """
+        Process parsing for multiple tracks in a batch for improved speed
+        
+        Args:
+            parsing_batch: List of (track_id, crop_resized, mask_resized) tuples
+            frame_count: Current frame number
+        """
+        if not parsing_batch:
+            return
+        
+        try:
+            # Extract batch data
+            track_ids = [item[0] for item in parsing_batch]
+            crops_batch = [item[1] for item in parsing_batch]
+            
+            if self.config.verbose:
+                print(f"🔄 Batch parsing {len(track_ids)} tracks at frame {frame_count}")
+            
+            # Batch process parsing (much faster than one-by-one)
+            parsing_results = self.parsing_model.extract_parsing(crops_batch)
+            
+            if self.config.verbose:
+                print(f"✅ Batch parsing complete: {len(parsing_results)} results")
+            
+            # Store results for each track
+            for i, track_id in enumerate(track_ids):
+                parsing_mask = parsing_results[i] if i < len(parsing_results) else np.zeros((256, 128), dtype=np.uint8)
+                self.track_parsing_masks[track_id].append(parsing_mask)
+                
+                if self.config.verbose:
+                    unique_parts = len(np.unique(parsing_mask))
+                    print(f"  Track {track_id}: {unique_parts} body parts, Parse buffer: {len(self.track_parsing_masks[track_id])}")
+                
+                # Check if ready for XGait extraction
+                if (len(self.track_silhouettes[track_id]) >= self.min_sequence_length and 
+                    frame_count - self.track_last_xgait_extraction[track_id] >= self.xgait_extraction_interval):
+                    self._extract_xgait_features(track_id, frame_count)
+                    
+        except Exception as e:
+            # Always print batch parsing errors, even if verbose is off
+            print(f"❌ Batch parsing failed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _extract_xgait_features(self, track_id: int, frame_count: int):
+        """
+        Extract XGait features for a track
+        
+        Args:
+            track_id: Track identifier
+            frame_count: Current frame number
+        """
+        try:
+            # Get sequences
+            silhouette_sequence = list(self.track_silhouettes[track_id])
+            parsing_sequence = list(self.track_parsing_masks[track_id])
+            crop_sequence = list(self.track_crops[track_id])
+            
+            # Synchronize sequences
+            min_length = min(len(silhouette_sequence), len(parsing_sequence), len(crop_sequence))
+            if min_length < self.min_sequence_length:
+                return
+            
+            # Use most recent frames
+            silhouette_sequence = silhouette_sequence[-min_length:]
+            parsing_sequence = parsing_sequence[-min_length:]
+            crop_sequence = crop_sequence[-min_length:]
+            
+            # Extract features
+            feature_vector = self.xgait_model.extract_features_from_sequence(
+                silhouettes=silhouette_sequence,
+                parsing_masks=parsing_sequence
+            )
+            
+            if feature_vector is not None and hasattr(feature_vector, 'size') and feature_vector.size > 0:
+                # Compute quality
+                sequence_quality = self._compute_sequence_quality(crop_sequence, parsing_sequence)
+                
+                # Update identity manager
+                self.identity_manager.update_track_embeddings(track_id, feature_vector, sequence_quality)
+                self.track_last_xgait_extraction[track_id] = frame_count
+                
+        except Exception as e:
+            if self.config.verbose:
+                print(f"⚠️ XGait extraction failed for track {track_id}: {e}")
     
     def _process_single_track_parsing(self, track_id: int, crop: np.ndarray, frame_count: int, crop_mask: np.ndarray = None) -> Dict:
         """
@@ -214,7 +313,7 @@ class GaitProcessor:
         """
         try:
             start_time = time.time()
-            
+
             # Resize crop to standard size (width, height) = (128, 256)
             crop_resized = cv2.resize(crop, (128, 256))
             
@@ -250,18 +349,24 @@ class GaitProcessor:
             try:
                 parsing_results = self.parsing_model.extract_parsing([crop_resized])
                 parsing_mask = parsing_results[0] if parsing_results else np.zeros((256, 128), dtype=np.uint8)
+                
+                if self.config.verbose and np.sum(parsing_mask > 0) > 0:
+                    unique_parts = len(np.unique(parsing_mask))
+                    print(f"✅ Parsing extracted for track {track_id}: {unique_parts} body parts detected")
             except Exception as e:
                 if self.config.verbose:
                     print(f"⚠️  Parsing extraction failed for track {track_id}: {e}")
                 parsing_mask = np.zeros((256, 128), dtype=np.uint8)
             
-            # Step 3: Store in sequence buffers with efficient management
-            from collections import deque
+            # Step 3: Store parsing masks (silhouettes and crops are stored in process_frame)
+            # Note: Silhouettes are already stored in process_frame every frame
+            # We only need to store parsing masks here (which are computed less frequently)
+            self.track_parsing_masks[track_id].append(parsing_mask)
             
-            # PERF-007 fix: Use efficient deque operations (O(1) append, automatic size management)
-            self.track_silhouettes[track_id].append(silhouette)
-            self.track_parsing_masks[track_id].append(parsing_mask)  
-            self.track_crops[track_id].append(crop_resized)
+            if self.config.verbose:
+                print(f"📊 Track {track_id} buffers - Sil: {len(self.track_silhouettes[track_id])}, "
+                      f"Parse: {len(self.track_parsing_masks[track_id])}, "
+                      f"Crops: {len(self.track_crops[track_id])}")
             
             # Step 4: Extract XGait features if conditions are met
             feature_vector = np.zeros(16384)  # XGait full feature dimension (256x64)
@@ -270,45 +375,78 @@ class GaitProcessor:
             if (len(self.track_silhouettes[track_id]) >= self.min_sequence_length and 
                 frame_count - self.track_last_xgait_extraction[track_id] >= self.xgait_extraction_interval):
                 try:
-                    # PERF-007 fix: Convert deque to list only when needed for model input
-                    crop_sequence = list(self.track_crops[track_id])
-                    parsing_sequence = list(self.track_parsing_masks[track_id])
+                    # Get sequences - silhouettes stored every frame, parsing stored less frequently
                     silhouette_sequence = list(self.track_silhouettes[track_id])
+                    parsing_sequence = list(self.track_parsing_masks[track_id])
+                    crop_sequence = list(self.track_crops[track_id])
                     
+                    # Synchronize sequences: use the shorter length to avoid mismatches
+                    # This happens because parsing is done less frequently than silhouettes
+                    min_length = min(len(silhouette_sequence), len(parsing_sequence), len(crop_sequence))
+                    if min_length < self.min_sequence_length:
+                        if self.config.verbose:
+                            print(f"⚠️ Insufficient synchronized sequence length for track {track_id}: {min_length} < {self.min_sequence_length}")
+                    else:
+                        # Use the most recent min_length frames from each sequence
+                        silhouette_sequence = silhouette_sequence[-min_length:]
+                        parsing_sequence = parsing_sequence[-min_length:]
+                        crop_sequence = crop_sequence[-min_length:]
+                        
                     # Additional safety checks before XGait extraction
                     if not silhouette_sequence or not parsing_sequence:
                         if self.config.verbose:
                             print(f"⚠️ Empty sequences for track {track_id}")
                     elif len(silhouette_sequence) != len(parsing_sequence):
                         if self.config.verbose:
-                            print(f"⚠️ Sequence length mismatch for track {track_id}: sil={len(silhouette_sequence)}, par={len(parsing_sequence)}")
+                            print(f"⚠️ Sequence length mismatch after sync for track {track_id}: sil={len(silhouette_sequence)}, par={len(parsing_sequence)}")
                     else:
-                        # Safely extract features with timeout protection
+                        # Safely extract features with enhanced error handling
                         feature_vector = None
-                        try:
-                            # Import signal for timeout (Unix only)
-                            import signal
-                            
-                            def timeout_handler(signum, frame):
-                                raise TimeoutError("XGait extraction timed out")
-                            
-                            # Set 30-second timeout for feature extraction
-                            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-                            signal.alarm(30)
-                            
+                        extraction_attempts = 0
+                        max_attempts = 2  # Allow one retry
+                        
+                        while extraction_attempts < max_attempts and feature_vector is None:
+                            extraction_attempts += 1
                             try:
+                                # Validate inputs before extraction
+                                if not silhouette_sequence or not parsing_sequence:
+                                    if self.config.verbose:
+                                        print(f"⚠️ Empty sequences for track {track_id}, attempt {extraction_attempts}")
+                                    break
+                                    
+                                # Check for dimension consistency
+                                expected_shape = (256, 128)
+                                valid_silhouettes = all(s.shape == expected_shape for s in silhouette_sequence)
+                                valid_parsing = all(p.shape == expected_shape for p in parsing_sequence)
+                                
+                                if not valid_silhouettes or not valid_parsing:
+                                    if self.config.verbose:
+                                        print(f"⚠️ Inconsistent sequence dimensions for track {track_id}")
+                                    break
+                                
+                                # Attempt feature extraction
                                 feature_vector = self.xgait_model.extract_features_from_sequence(
                                     silhouettes=silhouette_sequence,
                                     parsing_masks=parsing_sequence
                                 )
-                            finally:
-                                signal.alarm(0)  # Cancel timeout
-                                signal.signal(signal.SIGALRM, old_handler)  # Restore handler
                                 
-                        except (TimeoutError, Exception) as extraction_error:
-                            if self.config.verbose:
-                                print(f"⚠️ XGait extraction failed for track {track_id}: {extraction_error}")
-                            feature_vector = None
+                                # Validate output
+                                if feature_vector is None or not hasattr(feature_vector, 'size') or feature_vector.size == 0:
+                                    if self.config.verbose:
+                                        print(f"⚠️ Invalid feature vector returned for track {track_id}, attempt {extraction_attempts}")
+                                    feature_vector = None
+                                    if extraction_attempts < max_attempts:
+                                        continue  # Try again
+                                    
+                            except Exception as extraction_error:
+                                if self.config.verbose:
+                                    print(f"⚠️ XGait extraction failed for track {track_id}, attempt {extraction_attempts}: {extraction_error}")
+                                feature_vector = None
+                                if extraction_attempts < max_attempts:
+                                    # time module already imported at module level
+                                    import time as time_module  # Use alias to avoid shadowing
+                                    time_module.sleep(0.1)  # Brief pause before retry
+                                    continue
                     
                     # Only proceed if feature extraction was successful
                     if feature_vector is not None and hasattr(feature_vector, 'size') and feature_vector.size > 0:
@@ -355,11 +493,17 @@ class GaitProcessor:
             }
             
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            if self.config.verbose:
+                print(f"❌ Exception in _process_single_track_parsing for track {track_id}:")
+                print(error_details)
             return {
                 'track_id': track_id,
                 'frame_count': frame_count,
                 'success': False,
-                'error': str(e)
+                'error': str(e),
+                'traceback': error_details
             }
     
     def _compute_sequence_quality(self, crop_sequence: List[np.ndarray], parsing_sequence: List[np.ndarray]) -> float:
@@ -666,50 +810,7 @@ class GaitProcessor:
         
         return np.mean(confidence_scores) if confidence_scores else 0.0
 
-    # ...existing code...
-    
-    def _collect_parsing_results(self, frame_count: int) -> None:
-        """Collect completed parsing results from the queue"""
-        completed_tasks = []
-        
-        # Check for completed tasks
-        while not self.parsing_queue.empty():
-            try:
-                track_id, future = self.parsing_queue.get_nowait()
-                if future.done():
-                    completed_tasks.append((track_id, future))
-                else:
-                    self.parsing_queue.put_nowait((track_id, future))
-                    break
-            except queue.Empty:
-                break
-        
-        # Process completed results
-        for track_id, future in completed_tasks:
-            try:
-                result = future.result()
-                if result.get('success', False):
-                    self._store_parsing_result(result)
-            except Exception as e:
-                if self.config.verbose:
-                    print(f"⚠️  Error collecting parsing result for track {track_id}: {e}")
-    
-    def _store_parsing_result(self, result: Dict) -> None:
-        """Store parsing result for a track"""
-        track_id = result['track_id']
-        
-        # Store results with buffer management
-        self.track_parsing_results[track_id].append(result)
-        
-        # PERF-007 fix: deque with maxlen automatically handles overflow
-        # No need for manual buffer size management with pop(0)
-        
-        # Queue visualization task if needed
-        if not self.visualization_queue.full():
-            try:
-                self.visualization_queue.put_nowait(result.copy())
-            except queue.Full:
-                pass
+    # Legacy threading methods removed - using sequential batch processing instead
     
     def get_frame_track_embeddings(self, tracking_results: List[Tuple[int, any, float]]) -> Dict:
         """
@@ -788,7 +889,8 @@ class GaitProcessor:
             elif axes.ndim == 1:
                 axes = axes.reshape(-1, 1)
             
-            fig.suptitle(f'Frame {frame_count} - Silhouette & Parsing Debug', fontsize=14)
+            # Show parsing interval info in title
+            fig.suptitle(f'Frame {frame_count} - Silhouette & Parsing Debug (Parsing every {self.parsing_skip_interval} frames)', fontsize=14)
             
             for idx, (track_id, box, conf) in enumerate(tracking_results[:max_tracks_to_show]):
                 col_idx = idx
@@ -823,9 +925,9 @@ class GaitProcessor:
                     
                     # Row 3: Human Parsing
                     ax = axes[2, col_idx]
-                    if track_id in self.track_parsing_results and len(self.track_parsing_results[track_id]) > 0:
-                        latest_result = self.track_parsing_results[track_id][-1]
-                        parsing_mask = latest_result.get('parsing_mask', np.zeros((192, 96), dtype=np.uint8))
+                    if track_id in self.track_parsing_masks and len(self.track_parsing_masks[track_id]) > 0:
+                        # Get latest parsing mask directly from buffer
+                        parsing_mask = self.track_parsing_masks[track_id][-1]
                         
                         # Create color map for parsing visualization
                         parsing_colors = np.array([
@@ -856,7 +958,7 @@ class GaitProcessor:
                     # Row 4: Status and metrics
                     ax = axes[3, col_idx]
                     sil_count = len(self.track_silhouettes.get(track_id, []))
-                    parse_count = len(self.track_parsing_results.get(track_id, []))
+                    parse_count = len(self.track_parsing_masks.get(track_id, []))  # Fixed: use track_parsing_masks not track_parsing_results
                     gait_count = len(self.track_gait_features.get(track_id, []))
                     
                     status_text = f'ID: {track_id}\nConf: {conf:.2f}\nSil: {sil_count}\nParse: {parse_count}\nGait: {gait_count}'

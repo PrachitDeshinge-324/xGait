@@ -273,8 +273,8 @@ class SafeXGaitInference:
                     pars_batch = pars_tensor.unsqueeze(0)
                     sils_batch = sils_tensor.unsqueeze(0)
                     
-                    # Ensure correct data types - parsing masks should be long (integer)
-                    pars_batch = pars_batch.long()  # Convert to integer type
+                    # Ensure correct data types - keep as float for F.interpolate compatibility
+                    pars_batch = pars_batch.float()  # Float type for F.interpolate
                     sils_batch = sils_batch.float()  # Keep silhouettes as float
                     
                     logger.debug(f"Input shapes - Pars: {pars_batch.shape} ({pars_batch.dtype}), Sils: {sils_batch.shape} ({sils_batch.dtype})")
@@ -282,17 +282,23 @@ class SafeXGaitInference:
                     # Run inference with timeout protection
                     # XGait expects (ipts, labs, _, _, seqL) format
                     seq_length = int(pars_batch.size(1))  # Ensure integer type
-                    inputs = ([pars_batch, sils_batch], None, None, None, [seq_length] * pars_batch.size(0))
+                    # Create dummy labels tensor (required for model forward pass even during inference)
+                    labs = torch.zeros(pars_batch.size(0), dtype=torch.long, device=pars_batch.device)
+                    inputs = ([pars_batch, sils_batch], labs, None, None, [seq_length] * pars_batch.size(0))
                     outputs = self.model(inputs)
                     
-                    # Extract features safely
+                    # Extract features safely - XGait returns dict with 'inference_feat' -> 'embeddings'
                     if isinstance(outputs, dict):
-                        features = outputs.get('logits', outputs.get('features', outputs.get('embeddings')))
+                        if 'inference_feat' in outputs and 'embeddings' in outputs['inference_feat']:
+                            features = outputs['inference_feat']['embeddings']
+                        else:
+                            features = outputs.get('logits', outputs.get('features', outputs.get('embeddings')))
                     else:
                         features = outputs
                     
                     if features is None:
-                        logger.warning("Model returned None features")
+                        logger.warning("Model returned None features - output structure:")
+                        logger.warning(f"Output keys: {outputs.keys() if isinstance(outputs, dict) else 'not a dict'}")
                         return np.random.rand(16384).astype(np.float32)
                     
                     # Convert to numpy safely
@@ -336,6 +342,11 @@ class SafeXGaitInference:
                         torch.cuda.empty_cache() if torch.cuda.is_available() else None
                     else:
                         logger.error(f"Runtime error during inference: {e}")
+                        # Add detailed traceback for dtype errors
+                        if "scalar type" in str(e) or "dtype" in str(e).lower():
+                            logger.error("DTYPE ERROR DETECTED - Full traceback:")
+                            logger.error(traceback.format_exc())
+                            logger.error(f"Error details: {type(e).__name__}: {str(e)}")
                     return np.random.rand(16384).astype(np.float32)
                 
                 except Exception as e:

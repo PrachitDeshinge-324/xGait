@@ -22,16 +22,16 @@ import torch
 def get_device() -> str:
     """Determine the best available device for PyTorch - FORCED TO CPU FOR STABILITY"""
     # Force CPU to prevent segmentation faults with XGait model
-    return "cpu"
+    return "mps"
 
 def get_global_device() -> str:
     """Get the global device for all models"""
     return get_device()
 
 def get_xgait_device() -> str:
-    """Get the appropriate device for XGait model (CPU for stability to prevent segfaults)"""
-    # Force CPU for XGait to prevent segmentation faults
-    return "cpu"
+    """Get the appropriate device for XGait model - use MPS for speed on Apple Silicon"""
+    # Use MPS for faster inference on Apple Silicon
+    return "mps"
 
 def get_device_config(device: str) -> Dict[str, Any]:
     """Get device-specific configuration"""
@@ -138,15 +138,15 @@ class VideoConfig:
 @dataclass
 class xgaitConfig:
     """XGait-specific configuration"""
-    # Sequence buffer settings - improved for better quality
-    sequence_buffer_size = 50  # Increased for better XGait success
-    min_sequence_length = 10   # Increased minimum for better embedding quality
+    # Sequence buffer settings - optimized for speed and quality balance
+    sequence_buffer_size = 50  # Keep 50 frames for quality
+    min_sequence_length = 10   # Minimum for reliable embeddings
 
-    # Feature extraction settings - improved for quality over speed  
-    xgait_extraction_interval = 15  # Increased interval for more diverse sequences
+    # Feature extraction settings - optimized for speed
+    xgait_extraction_interval = 25  # Extract less frequently (every 25 frames ~1 sec) for speed
 
-    # Similarity threshold for identification - Updated after cleaning analysis
-    similarity_threshold = 0.909  # Updated after gallery cleaning analysis
+    # Similarity threshold for identification - tightened for accuracy
+    similarity_threshold = 0.93  # Higher threshold for better precision (fewer false positives)
     device: str = get_xgait_device()  # Use global XGait device logic
 
 @dataclass
@@ -163,10 +163,11 @@ class IdentityConfig:
     quality_outlier_threshold: float = 2.0    # Standard deviations for quality outlier detection
     similarity_outlier_threshold: float = 0.15 # Distance threshold for similarity outlier detection
     
-    # Embedding quality and similarity thresholds - Updated after cleaning
-    min_quality_threshold: float = 0.3
-    similarity_threshold: float = 0.909  # Updated after gallery cleaning analysis
-    high_confidence_threshold: float = 0.93  # Higher threshold for very confident matches
+    # Embedding quality and similarity thresholds - optimized for accuracy
+    min_quality_threshold: float = 0.5  # Raised from 0.3 for better quality embeddings
+    similarity_threshold: float = 0.93  # Raised for better precision (fewer false matches)
+    high_confidence_threshold: float = 0.95  # Higher threshold for very confident matches
+    embedding_consistency_threshold: float = 0.85  # Raised back to 0.85 for stricter consistency
     
     # Embedding buffer management
     max_embeddings_per_person: int = 20
@@ -190,10 +191,10 @@ class IdentityConfig:
     enable_periodic_cleanup: bool = True
     max_track_history_length: int = 500  # reduced from 1000 for memory efficiency
     
-    # Real-time performance optimizations - balanced mode
+    # Real-time performance optimizations - speed mode
     enable_debug_outputs: bool = False  # Disabled by default for performance
     enable_visualization_queue: bool = False  # Disabled for performance
-    parsing_skip_interval: int = 2  # Process parsing every 2nd frame for better performance
+    parsing_skip_interval: int = 3  # Process parsing every 3rd frame for speed (was 2)
 
 @dataclass
 class SystemConfig:
@@ -205,8 +206,8 @@ class SystemConfig:
     identity: IdentityConfig = field(default_factory=IdentityConfig)  # Include IdentityConfig
 
     # System settings
-    verbose: bool = True
-    debug_mode: bool = True
+    verbose: bool = False  # Disabled for speed (reduce print overhead)
+    debug_mode: bool = False  # Disabled for speed (no debug visualizations)
     
     @classmethod
     def load_default(cls) -> 'SystemConfig':

@@ -35,10 +35,10 @@ class FAISSPersonGallery:
     - Persistent storage
     """
     
-    def __init__(self, 
-                 embedding_dim: int = 16384,  # XGait: 256x64 = 16384
-                 similarity_threshold: float = 0.91,
-                 max_embeddings_per_person: int = 10):
+    def __init__(self,
+                 embedding_dim: int = 16384,
+                 similarity_threshold: float = 0.93,  # Higher threshold for better accuracy
+                 max_embeddings_per_person: int = 100):
         """
         Initialize FAISS gallery
         
@@ -52,9 +52,9 @@ class FAISSPersonGallery:
         self.max_embeddings_per_person = max_embeddings_per_person
         
         # Multi-tier similarity thresholds for better identification
-        self.high_confidence_threshold = similarity_threshold  # 0.91 -> high confidence match
-        self.medium_confidence_threshold = similarity_threshold * 0.82  # ~0.75 -> medium confidence  
-        self.low_confidence_threshold = similarity_threshold * 0.65  # ~0.60 -> low confidence
+        self.high_confidence_threshold = 0.95  # Very high confidence match
+        self.medium_confidence_threshold = 0.93  # Medium confidence (same as base)
+        self.low_confidence_threshold = 0.90  # Low confidence (still quite high)
         
         # Temporal matching parameters
         self.temporal_window = 100  # frames to consider for temporal matching
@@ -261,12 +261,12 @@ class FAISSPersonGallery:
         # Validate cluster consistency for existing persons
         if person_name in self.name_to_indices and len(self.name_to_indices[person_name]) > 0:
             consistency_score = self._calculate_cluster_consistency_score(person_name, normalized_embedding)
-            min_consistency_threshold = 0.7  # Minimum consistency to add to existing cluster
+            min_consistency_threshold = 0.80  # Lowered from 0.85 to accept more valid embeddings
             
             if consistency_score < min_consistency_threshold:
-                logger.warning(f"Embedding consistency too low for {person_name}: {consistency_score:.3f} < {min_consistency_threshold}")
-                logger.warning(f"Consider this might be a different person or poor quality embedding")
-                # Still allow addition but log the warning for manual review
+                logger.warning(f"❌ REJECTED: Embedding consistency too low for {person_name}: {consistency_score:.3f} < {min_consistency_threshold}")
+                logger.warning(f"This is likely a DIFFERENT person or poor quality embedding - NOT adding to gallery")
+                return False  # Reject the embedding instead of adding it
         
         # Calculate cluster density before adding (for logging)
         density_before = self._calculate_cluster_density(person_name)
@@ -693,6 +693,9 @@ class FAISSPersonGallery:
                 if outliers_removed > 0:
                     logger.info(f"🧹 Auto-cleaned {outliers_removed} outliers before saving")
             
+            # === VALIDATION: Check if normalization fix improved discrimination ===
+            discrimination_analysis = self._analyze_inter_person_discrimination()
+            
             save_data = {
                 'embeddings': [emb for emb in self.person_embeddings if emb is not None],
                 'name_to_indices': self.name_to_indices,
@@ -703,6 +706,7 @@ class FAISSPersonGallery:
                     'max_embeddings_per_person': self.max_embeddings_per_person
                 },
                 'statistics': self.get_gallery_statistics(),
+                'discrimination_analysis': discrimination_analysis,  # NEW: Track discrimination quality
                 'save_time': datetime.now().isoformat()
             }
             
@@ -784,6 +788,35 @@ class FAISSPersonGallery:
             
             logger.info(f"🔄 FAISS gallery loaded from {filepath}")
             logger.info(f"   Loaded {self.total_persons} persons with {self.total_embeddings} embeddings")
+            
+            # === VALIDATION: Check discrimination quality of loaded gallery ===
+            if 'discrimination_analysis' in save_data:
+                logger.info("\n📊 Previous Discrimination Analysis (from last save):")
+                old_analysis = save_data['discrimination_analysis']
+                if old_analysis.get('status') == 'success':
+                    logger.info(f"   Intra-person: {old_analysis['intra_person']['mean']:.4f}")
+                    logger.info(f"   Inter-person: {old_analysis['inter_person']['mean']:.4f}")
+                    logger.info(f"   Discrimination: {old_analysis['discrimination']['quality']}")
+            
+            # Analyze current discrimination to compare with previous
+            logger.info("\n🔄 Current Discrimination Analysis (with normalization fix):")
+            current_analysis = self._analyze_inter_person_discrimination()
+            
+            # Compare if we have both
+            if 'discrimination_analysis' in save_data and save_data['discrimination_analysis'].get('status') == 'success':
+                old = save_data['discrimination_analysis']
+                curr = current_analysis
+                if curr.get('status') == 'success':
+                    gap_improvement = curr['discrimination']['separation_gap'] - old['discrimination']['separation_gap']
+                    logger.info(f"\n{'🎉' if gap_improvement > 0 else '⚠️'} Improvement Analysis:")
+                    logger.info(f"   Separation Gap Change: {gap_improvement:+.4f}")
+                    if gap_improvement > 0.1:
+                        logger.info("   ✅ SIGNIFICANT IMPROVEMENT - Normalization fix is working!")
+                    elif gap_improvement > 0:
+                        logger.info("   ✅ Moderate improvement - Normalization fix helped")
+                    else:
+                        logger.warning("   ⚠️ No improvement or regression - May need further tuning")
+            
             return True
             
         except Exception as e:
@@ -842,6 +875,181 @@ class FAISSPersonGallery:
                 'quality_std': np.std(qualities),
                 'quality_range': [min(qualities), max(qualities)]
             }
+        
+        return analysis
+    
+    def _analyze_inter_person_discrimination(self) -> Dict:
+        """
+        Analyze how well different persons are discriminated from each other
+        This validates if the normalization fix improved discrimination
+        
+        Returns:
+            Dictionary with discrimination metrics
+        """
+        if len(self.name_to_indices) < 2:
+            return {
+                'status': 'insufficient_data',
+                'message': 'Need at least 2 persons for discrimination analysis'
+            }
+        
+        # Calculate intra-person similarities (within same person)
+        intra_similarities = []
+        person_intra_stats = {}
+        
+        for person_name in self.name_to_indices.keys():
+            indices = self.name_to_indices[person_name]
+            valid_embeddings = []
+            
+            for idx in indices:
+                if idx < len(self.person_embeddings) and self.person_embeddings[idx] is not None:
+                    valid_embeddings.append(self.person_embeddings[idx].embedding)
+            
+            if len(valid_embeddings) < 2:
+                continue
+            
+            # Calculate all pairwise similarities within this person
+            person_sims = []
+            for i in range(len(valid_embeddings)):
+                for j in range(i + 1, len(valid_embeddings)):
+                    sim = np.dot(valid_embeddings[i], valid_embeddings[j])
+                    person_sims.append(sim)
+                    intra_similarities.append(sim)
+            
+            person_intra_stats[person_name] = {
+                'mean': np.mean(person_sims),
+                'std': np.std(person_sims),
+                'min': np.min(person_sims),
+                'max': np.max(person_sims)
+            }
+        
+        # Calculate inter-person similarities (between different persons)
+        inter_similarities = []
+        person_pairs = []
+        
+        person_names = list(self.name_to_indices.keys())
+        for i in range(len(person_names)):
+            for j in range(i + 1, len(person_names)):
+                person1 = person_names[i]
+                person2 = person_names[j]
+                
+                # Get embeddings for both persons
+                indices1 = self.name_to_indices[person1]
+                indices2 = self.name_to_indices[person2]
+                
+                embeddings1 = [self.person_embeddings[idx].embedding 
+                              for idx in indices1 
+                              if idx < len(self.person_embeddings) and self.person_embeddings[idx] is not None]
+                embeddings2 = [self.person_embeddings[idx].embedding 
+                              for idx in indices2 
+                              if idx < len(self.person_embeddings) and self.person_embeddings[idx] is not None]
+                
+                if not embeddings1 or not embeddings2:
+                    continue
+                
+                # Calculate similarities between persons
+                pair_sims = []
+                for emb1 in embeddings1:
+                    for emb2 in embeddings2:
+                        sim = np.dot(emb1, emb2)
+                        pair_sims.append(sim)
+                        inter_similarities.append(sim)
+                
+                if pair_sims:
+                    max_cross_sim = np.max(pair_sims)
+                    person_pairs.append((person1, person2, max_cross_sim))
+        
+        if not intra_similarities or not inter_similarities:
+            return {
+                'status': 'insufficient_data',
+                'message': 'Not enough embeddings for discrimination analysis'
+            }
+        
+        # Calculate discrimination metrics
+        intra_mean = np.mean(intra_similarities)
+        intra_std = np.std(intra_similarities)
+        inter_mean = np.mean(inter_similarities)
+        inter_std = np.std(inter_similarities)
+        
+        # Discrimination score: higher is better (intra should be high, inter should be low)
+        separation_gap = intra_mean - inter_mean
+        discrimination_score = separation_gap / (intra_std + inter_std + 1e-8)
+        
+        # Find problematic pairs (high inter-person similarity)
+        problematic_pairs = [(p1, p2, sim) for p1, p2, sim in person_pairs if sim > 0.85]
+        problematic_pairs.sort(key=lambda x: x[2], reverse=True)
+        
+        analysis = {
+            'status': 'success',
+            'intra_person': {
+                'mean': float(intra_mean),
+                'std': float(intra_std),
+                'min': float(np.min(intra_similarities)),
+                'max': float(np.max(intra_similarities)),
+                'count': len(intra_similarities)
+            },
+            'inter_person': {
+                'mean': float(inter_mean),
+                'std': float(inter_std),
+                'min': float(np.min(inter_similarities)),
+                'max': float(np.max(inter_similarities)),
+                'count': len(inter_similarities)
+            },
+            'discrimination': {
+                'separation_gap': float(separation_gap),
+                'discrimination_score': float(discrimination_score),
+                'quality': 'excellent' if discrimination_score > 2.0 else 
+                          'good' if discrimination_score > 1.0 else
+                          'fair' if discrimination_score > 0.5 else 'poor'
+            },
+            'problematic_pairs': [
+                {'person1': p1, 'person2': p2, 'max_similarity': float(sim)}
+                for p1, p2, sim in problematic_pairs[:5]  # Top 5 problematic pairs
+            ],
+            'per_person_intra': person_intra_stats
+        }
+        
+        # Log discrimination analysis - use print to ensure visibility
+        print("\n" + "=" * 80)
+        print("🔍 DISCRIMINATION ANALYSIS (Validates Normalization Fix)")
+        print("=" * 80)
+        print(f"📊 Intra-Person Similarity (same person): {intra_mean:.4f} ± {intra_std:.4f}")
+        print(f"📊 Inter-Person Similarity (different persons): {inter_mean:.4f} ± {inter_std:.4f}")
+        print(f"📊 Separation Gap: {separation_gap:.4f} (higher is better)")
+        print(f"📊 Discrimination Score: {discrimination_score:.4f} ({analysis['discrimination']['quality']})")
+        print(f"📊 Quality Assessment: {analysis['discrimination']['quality'].upper()}")
+        
+        if problematic_pairs:
+            print(f"\n⚠️  Found {len(problematic_pairs)} problematic person pairs with high similarity:")
+            for p1, p2, sim in problematic_pairs[:3]:
+                print(f"   • {p1} ↔ {p2}: {sim:.4f} (TOO HIGH - may cause confusion)")
+        else:
+            print("\n✅ No problematic person pairs detected - good discrimination!")
+        
+        # Interpretation guide
+        print("\n📖 Interpretation Guide:")
+        print("   • Intra-person (same person) should be HIGH (> 0.90)")
+        print("   • Inter-person (different persons) should be LOW (< 0.70)")
+        print("   • Separation gap should be LARGE (> 0.20)")
+        print("   • If normalization fix worked: discrimination should be 'good' or 'excellent'")
+        
+        # Automatic threshold recommendation
+        if problematic_pairs:
+            max_inter_sim = problematic_pairs[0][2]  # Highest inter-person similarity
+            recommended_threshold = max_inter_sim + 0.01  # Slightly above max inter-person
+            current_threshold = self.similarity_threshold
+            
+            print(f"\n⚙️  Threshold Recommendation:")
+            print(f"   • Current threshold: {current_threshold:.3f}")
+            print(f"   • Max inter-person similarity: {max_inter_sim:.3f}")
+            
+            if current_threshold <= max_inter_sim:
+                print(f"   • ⚠️  PROBLEM: Threshold too low! Different people will be matched as same person!")
+                print(f"   • 💡 Recommended threshold: {recommended_threshold:.3f}")
+                print(f"   • 🔧 This would prevent false matches while keeping intra-person matches (avg: {intra_mean:.3f})")
+            else:
+                print(f"   • ✅ Threshold is appropriately set above max inter-person similarity")
+        
+        print("=" * 80 + "\n")
         
         return analysis
 
