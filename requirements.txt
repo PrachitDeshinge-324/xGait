@@ -1,9 +1,19 @@
 # Core dependencies for Person Tracking with Custom TransReID
-ultralytics>=8.0.0
+# Note: Install in this order to avoid numpy/torch compatibility issues
+
+# NumPy - specific version to ensure torch compatibility
+numpy==1.26.4
+
+# PyTorch ecosystem
 torch>=2.0.0
 torchvision>=0.15.0
+
+# SciPy - compatible with numpy 1.x
+scipy>=1.11.0,<1.14.0
+
+# Computer vision and ML
+ultralytics>=8.0.0
 opencv-python>=4.8.0
-numpy>=1.24.0
 Pillow>=9.5.0
 scikit-learn>=1.3.0
 timm>=0.9.0
@@ -14,7 +24,11 @@ seaborn>=0.12.0    # For enhanced plotting
 pandas>=2.0.0      # For data manipulation
 tqdm>=4.65.0       # For progress bars
 
-# Optional dependencies for enhanced visualization (install separately if needed)
-# umap-learn>=0.5.3    # For UMAP dimensionality reduction
-# plotly>=5.0.0        # For interactive visualizations
-# jupyter              # For notebook analysis
+# FAISS for similarity search (choose one based on your hardware)
+# faiss-cpu>=1.7.4              # For CPU-only systems
+# faiss-gpu>=1.7.4              # For NVIDIA GPU systems
+
+# Optional dependencies for enhanced visualization
+umap-learn>=0.5.3    # For UMAP dimensionality reduction
+# plotly>=5.0.0      # For interactive visualizations
+# jupyter            # For notebook analysis
