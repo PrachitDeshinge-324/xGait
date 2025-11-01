@@ -20,28 +20,35 @@ from typing import Optional, Dict, Any
 import torch
 
 def get_device() -> str:
-    """Determine the best available device for PyTorch - FORCED TO CPU FOR STABILITY"""
-    # Force CPU to prevent segmentation faults with XGait model
-    return "mps"
+    """Automatically detect and select the best available device for PyTorch"""
+    if torch.cuda.is_available():
+        return "cuda"
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        # MPS (Apple Silicon GPU) available
+        return "mps"
+    else:
+        return "cpu"
 
 def get_global_device() -> str:
     """Get the global device for all models"""
     return get_device()
 
 def get_xgait_device() -> str:
-    """Get the appropriate device for XGait model - use MPS for speed on Apple Silicon"""
-    # Use MPS for faster inference on Apple Silicon
-    return "mps"
+    """Get the appropriate device for XGait model - same as global device for consistency"""
+    # Use same device as global for better GPU utilization
+    return get_device()
 
 def get_device_config(device: str) -> Dict[str, Any]:
-    """Get device-specific configuration"""
+    """Get device-specific configuration optimized for steady GPU usage"""
     if device == "cuda":
         return {
             "dtype": torch.float16,  # Use float16 for CUDA for memory efficiency
             "autocast": True,
             "compile": True,
             "memory_format": torch.channels_last,
-            "batch_size_multiplier": 2.0
+            "batch_size_multiplier": 2.0,
+            "max_batch_size": 8,  # Limit batch size for steady GPU usage
+            "use_stream": True  # Use CUDA streams for async operations
         }
     elif device == "mps":
         return {
@@ -49,7 +56,9 @@ def get_device_config(device: str) -> Dict[str, Any]:
             "autocast": False,  # MPS doesn't support autocast yet
             "compile": False,  # MPS compilation can be unstable
             "memory_format": torch.contiguous_format,
-            "batch_size_multiplier": 1.0
+            "batch_size_multiplier": 1.5,  # Increased for better GPU utilization
+            "max_batch_size": 6,  # Optimal batch size for M2 GPU
+            "use_stream": False  # MPS doesn't support streams
         }
     else:  # CPU
         return {
@@ -57,7 +66,9 @@ def get_device_config(device: str) -> Dict[str, Any]:
             "autocast": False,
             "compile": False,
             "memory_format": torch.contiguous_format,
-            "batch_size_multiplier": 0.5
+            "batch_size_multiplier": 0.5,
+            "max_batch_size": 4,
+            "use_stream": False
         }
 
 WEIGHTS_DIR = "../Weights"

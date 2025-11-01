@@ -39,7 +39,7 @@ python main.py \
     --input input/3c1.mp4 \
     --interactive \
     --save-video \
-    --max-frames 500 \
+    --max-frames 1000 \
     --debug \
     --output output \
     --output-video output/3c1_clustering.mp4

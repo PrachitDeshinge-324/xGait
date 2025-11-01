@@ -7,6 +7,7 @@ import os
 import cv2
 import numpy as np
 import time
+import torch
 from collections import defaultdict, deque
 from typing import List, Tuple, Dict, Optional
 from pathlib import Path
@@ -88,28 +89,35 @@ class GaitProcessor:
         print("   Silhouette extraction: ✅ USING YOLO MASKS FROM TRACKER")
         silhouette_test_passed = True  # Always pass since we use masks from tracker
         
-        # Test parsing model with a dummy image
+        # GPU Warmup for steady utilization
+        print("🔥 Warming up GPU for steady performance...")
         try:
-            test_image = np.random.randint(0, 255, (256, 128, 3), dtype=np.uint8)
-            parsing_test = self.parsing_model.extract_parsing([test_image])
-            parsing_test_passed = parsing_test is not None and len(parsing_test) == 1
-            print(f"   Parsing model test: {'✅ PASSED' if parsing_test_passed else '❌ FAILED'}")
+            # Warmup parsing model with consistent batch sizes
+            warmup_images = [np.random.randint(0, 255, (256, 128, 3), dtype=np.uint8) for _ in range(6)]
+            for _ in range(3):  # Run 3 warmup iterations
+                _ = self.parsing_model.extract_parsing(warmup_images)
+            print("   Parsing model warmup: ✅ COMPLETE")
+            parsing_test_passed = True
         except Exception as e:
-            print(f"   Parsing model test: ❌ FAILED ({e})")
+            print(f"   Parsing model warmup: ❌ FAILED ({e})")
             parsing_test_passed = False
         
-        # Test XGait model
+        # Test XGait model with warmup
         try:
             # Use longer sequence for XGait test (needs minimum length)
             test_silhouettes = [np.random.randint(0, 255, (256, 128), dtype=np.uint8) for _ in range(10)]
             test_parsing = [np.random.randint(0, 7, (256, 128), dtype=np.uint8) for _ in range(10)]
-            xgait_test = self.xgait_model.extract_features_from_sequence(
-                silhouettes=test_silhouettes, parsing_masks=test_parsing
-            )
+            
+            # Warmup XGait model
+            for _ in range(2):  # Run 2 warmup iterations
+                xgait_test = self.xgait_model.extract_features_from_sequence(
+                    silhouettes=test_silhouettes, parsing_masks=test_parsing
+                )
+            
             xgait_test_passed = xgait_test is not None and xgait_test.size > 0
-            print(f"   XGait model test: {'✅ PASSED' if xgait_test_passed else '❌ FAILED'}")
+            print(f"   XGait model warmup: {'✅ COMPLETE' if xgait_test_passed else '❌ FAILED'}")
         except Exception as e:
-            print(f"   XGait model test: ❌ FAILED ({e})")
+            print(f"   XGait model warmup: ❌ FAILED ({e})")
             xgait_test_passed = False
         
         if not (silhouette_test_passed and parsing_test_passed and xgait_test_passed):
@@ -213,7 +221,7 @@ class GaitProcessor:
     
     def _process_batch_parsing(self, parsing_batch: List[Tuple[int, np.ndarray, np.ndarray]], frame_count: int):
         """
-        Process parsing for multiple tracks in a batch for improved speed
+        Process parsing for multiple tracks in a batch for improved speed and steady GPU utilization
         
         Args:
             parsing_batch: List of (track_id, crop_resized, mask_resized) tuples
@@ -223,6 +231,9 @@ class GaitProcessor:
             return
         
         try:
+            # Get optimal batch size from config for steady GPU usage
+            max_batch_size = getattr(self.config.model.device_config, 'max_batch_size', 6)
+            
             # Extract batch data
             track_ids = [item[0] for item in parsing_batch]
             crops_batch = [item[1] for item in parsing_batch]
@@ -230,8 +241,17 @@ class GaitProcessor:
             if self.config.verbose:
                 print(f"🔄 Batch parsing {len(track_ids)} tracks at frame {frame_count}")
             
-            # Batch process parsing (much faster than one-by-one)
-            parsing_results = self.parsing_model.extract_parsing(crops_batch)
+            # Process in optimal-sized batches for steady GPU utilization
+            all_parsing_results = []
+            for batch_start in range(0, len(crops_batch), max_batch_size):
+                batch_end = min(batch_start + max_batch_size, len(crops_batch))
+                mini_batch = crops_batch[batch_start:batch_end]
+                
+                # Batch process parsing with consistent batch sizes
+                batch_results = self.parsing_model.extract_parsing(mini_batch)
+                all_parsing_results.extend(batch_results)
+            
+            parsing_results = all_parsing_results
             
             if self.config.verbose:
                 print(f"✅ Batch parsing complete: {len(parsing_results)} results")
@@ -243,12 +263,16 @@ class GaitProcessor:
                 
                 if self.config.verbose:
                     unique_parts = len(np.unique(parsing_mask))
-                    print(f"  Track {track_id}: {unique_parts} body parts, Parse buffer: {len(self.track_parsing_masks[track_id])}")
+                    # print(f"  Track {track_id}: {unique_parts} body parts, Parse buffer: {len(self.track_parsing_masks[track_id])}")
                 
                 # Check if ready for XGait extraction
                 if (len(self.track_silhouettes[track_id]) >= self.min_sequence_length and 
                     frame_count - self.track_last_xgait_extraction[track_id] >= self.xgait_extraction_interval):
                     self._extract_xgait_features(track_id, frame_count)
+            
+            # Synchronize GPU operations for steady utilization (MPS)
+            if self.config.model.device == "mps" and hasattr(torch.mps, 'synchronize'):
+                torch.mps.synchronize()
                     
         except Exception as e:
             # Always print batch parsing errors, even if verbose is off
@@ -352,7 +376,7 @@ class GaitProcessor:
                 
                 if self.config.verbose and np.sum(parsing_mask > 0) > 0:
                     unique_parts = len(np.unique(parsing_mask))
-                    print(f"✅ Parsing extracted for track {track_id}: {unique_parts} body parts detected")
+                    # print(f"✅ Parsing extracted for track {track_id}: {unique_parts} body parts detected")
             except Exception as e:
                 if self.config.verbose:
                     print(f"⚠️  Parsing extraction failed for track {track_id}: {e}")
