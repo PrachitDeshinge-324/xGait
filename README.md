@@ -447,13 +447,6 @@ Contributions are welcome! Please:
 3. Make your changes
 4. Submit a pull request
 
-## 📄 License
-
-This project is for academic and research purposes. Please respect the licenses of the underlying models:
-- YOLO: AGPL-3.0
-- TransReID: Original authors' license
-- XGait: Original authors' license
-
 ## 📧 Contact
 
 For questions or issues:
